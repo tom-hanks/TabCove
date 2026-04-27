@@ -326,30 +326,37 @@ async function getRecentlyClosed() {
  * addToRecentlyClosed(tab)
  *
  * 添加关闭的标签到历史记录
+ *
+ * 注意: 这里存在一个已知限制 - 如果两个标签同时关闭，
+ * 两个调用会并发读取相同状态，导致后者覆盖前者。
+ * Chrome storage.local 不支持事务性操作，这是实际限制。
+ * 由于这种情况极少发生，且影响极小，暂以此简单实现。
  */
 async function addToRecentlyClosed(tab) {
-  const history = await getRecentlyClosed();
-  history.unshift({
+  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
+  // 使用 Date.now() + 随机数生成唯一 ID，解决 URL 相同时无法区分的问题
+  const id = Date.now().toString(36) + Math.random().toString(36).substring(2, 11);
+  recentlyClosed.unshift({
+    id,
     url: tab.url,
     title: tab.title,
     closedAt: new Date().toISOString(),
-    favicon: tab.favicon || '',
   });
   // 限制数量
-  if (history.length > MAX_HISTORY_COUNT) {
-    history.pop();
+  if (recentlyClosed.length > MAX_HISTORY_COUNT) {
+    recentlyClosed.pop();
   }
-  await chrome.storage.local.set({ recentlyClosed: history });
+  await chrome.storage.local.set({ recentlyClosed: recentlyClosed });
 }
 
 /**
- * removeFromRecentlyClosed(url)
+ * removeFromRecentlyClosed(id)
  *
  * 从历史记录中移除（恢复时调用）
  */
-async function removeFromRecentlyClosed(url) {
-  const history = await getRecentlyClosed();
-  const filtered = history.filter(item => item.url !== url);
+async function removeFromRecentlyClosed(id) {
+  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
+  const filtered = recentlyClosed.filter(item => item.id !== id);
   await chrome.storage.local.set({ recentlyClosed: filtered });
 }
 
@@ -1241,11 +1248,11 @@ async function renderHistoryPanel() {
     const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
 
     return `
-      <div class="history-item" data-url="${item.url.replace(/"/g, '&quot;')}">
+      <div class="history-item" data-id="${item.id}" data-url="${item.url.replace(/"/g, '&quot;')}">
         <img src="${faviconUrl}" class="favicon" alt="" onerror="this.style.display='none'">
         <span class="title" title="${(item.title || '').replace(/"/g, '&quot;')}">${item.title || item.url}</span>
         <span class="closed-at">${timeAgo(item.closedAt)}</span>
-        <button class="restore-btn" data-action="restore-from-history" data-url="${item.url.replace(/"/g, '&quot;')}" title="恢复">
+        <button class="restore-btn" data-action="restore-from-history" data-id="${item.id}" data-url="${item.url.replace(/"/g, '&quot;')}" title="恢复">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15" /></svg>
         </button>
       </div>`;
@@ -1750,10 +1757,11 @@ document.addEventListener('click', async (e) => {
   // Restore button
   const restoreBtn = e.target.closest('.restore-btn');
   if (restoreBtn) {
+    const id = restoreBtn.dataset.id;
     const url = restoreBtn.dataset.url;
-    if (url) {
+    if (url && id) {
       await chrome.tabs.create({ url });
-      await removeFromRecentlyClosed(url);
+      await removeFromRecentlyClosed(id);
       await renderHistoryPanel();
       showToast('已恢复');
     }
@@ -1822,6 +1830,129 @@ document.getElementById('filterDomain')?.addEventListener('change', (e) => {
   filterDomain = e.target.value;
   filterDomainGroups();
 });
+
+
+/* ----------------------------------------------------------------
+   快捷键支持
+   ---------------------------------------------------------------- */
+
+let focusedChipIndex = -1; // 当前聚焦的 chip 索引
+
+function getAllChips() {
+  return Array.from(document.querySelectorAll('.page-chip[data-action="focus-tab"]'));
+}
+
+function updateFocusedChip(index) {
+  const chips = getAllChips();
+  chips.forEach((chip, i) => {
+    chip.classList.toggle('focused', i === index);
+  });
+  focusedChipIndex = index;
+}
+
+function clearFocusedChip() {
+  const chips = getAllChips();
+  chips.forEach(chip => chip.classList.remove('focused'));
+  focusedChipIndex = -1;
+}
+
+// 首次使用提示
+function showKeyboardHints() {
+  const hasSeen = localStorage.getItem('tabout-keyboard-hints-seen');
+  if (!hasSeen) {
+    setTimeout(() => {
+      showToast('按 / 键搜索 · d 保存 · x 关闭 · j/k 导航', 4000);
+      localStorage.setItem('tabout-keyboard-hints-seen', 'true');
+    }, 1000);
+  }
+}
+
+document.addEventListener('keydown', async (e) => {
+  // 忽略输入框内的按键
+  if (e.target.matches('input, textarea')) {
+    if (e.key === 'Escape') {
+      e.target.value = '';
+      e.target.dispatchEvent(new Event('input'));
+      e.target.blur();
+    }
+    return;
+  }
+
+  const searchInput = document.getElementById('searchInput');
+
+  switch (e.key) {
+    case '/':
+      e.preventDefault();
+      searchInput?.focus();
+      break;
+
+    case 'Escape':
+      if (searchInput?.value) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+      clearFocusedChip();
+      // 关闭展开的 chips
+      document.querySelectorAll('.page-chips-overflow').forEach(el => {
+        el.style.display = 'none';
+      });
+      break;
+
+    case 'd':
+    case 'D':
+      // 保存当前聚焦的标签
+      if (focusedChipIndex >= 0) {
+        const chips = getAllChips();
+        const chip = chips[focusedChipIndex];
+        if (chip) {
+          const saveBtn = chip.querySelector('[data-action="defer-single-tab"]');
+          if (saveBtn) saveBtn.click();
+        }
+      }
+      break;
+
+    case 'x':
+    case 'X':
+      // 关闭当前聚焦的标签
+      if (focusedChipIndex >= 0) {
+        const chips = getAllChips();
+        const chip = chips[focusedChipIndex];
+        if (chip) {
+          const closeBtn = chip.querySelector('[data-action="close-single-tab"]');
+          if (closeBtn) closeBtn.click();
+          clearFocusedChip();
+        }
+      }
+      break;
+
+    case 'j':
+    case 'ArrowDown':
+      e.preventDefault();
+      {
+        const chips = getAllChips();
+        if (chips.length === 0) return;
+        const nextIndex = focusedChipIndex < chips.length - 1 ? focusedChipIndex + 1 : 0;
+        updateFocusedChip(nextIndex);
+        chips[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      break;
+
+    case 'k':
+    case 'ArrowUp':
+      e.preventDefault();
+      {
+        const chips = getAllChips();
+        if (chips.length === 0) return;
+        const prevIndex = focusedChipIndex > 0 ? focusedChipIndex - 1 : chips.length - 1;
+        updateFocusedChip(prevIndex);
+        chips[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      break;
+  }
+});
+
+// 初始化时显示快捷键提示
+showKeyboardHints();
 
 
 /* ----------------------------------------------------------------

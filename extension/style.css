@@ -1380,3 +1380,10 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   font-size: 11px;
   padding: 4px 10px;
 }
+
+/* ── 键盘聚焦 ── */
+.page-chip.focused {
+  background: rgba(200, 113, 58, 0.08);
+  outline: 2px solid var(--accent-amber);
+  outline-offset: -2px;
+}
