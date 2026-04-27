@@ -303,11 +303,74 @@ async function dismissSavedTab(id) {
 
 
 /* ----------------------------------------------------------------
+   历史记录 — chrome.storage.local
+   ---------------------------------------------------------------- */
+
+const MAX_HISTORY_COUNT = 500;
+const MAX_HISTORY_DAYS = 2; // 48小时内
+
+/**
+ * getRecentlyClosed()
+ *
+ * 获取最近关闭的标签历史
+ */
+async function getRecentlyClosed() {
+  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
+  const cutoff = Date.now() - (MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000);
+  return recentlyClosed
+    .filter(item => new Date(item.closedAt).getTime() > cutoff)
+    .slice(0, MAX_HISTORY_COUNT);
+}
+
+/**
+ * addToRecentlyClosed(tab)
+ *
+ * 添加关闭的标签到历史记录
+ */
+async function addToRecentlyClosed(tab) {
+  const history = await getRecentlyClosed();
+  history.unshift({
+    url: tab.url,
+    title: tab.title,
+    closedAt: new Date().toISOString(),
+    favicon: tab.favicon || '',
+  });
+  // 限制数量
+  if (history.length > MAX_HISTORY_COUNT) {
+    history.pop();
+  }
+  await chrome.storage.local.set({ recentlyClosed: history });
+}
+
+/**
+ * removeFromRecentlyClosed(url)
+ *
+ * 从历史记录中移除（恢复时调用）
+ */
+async function removeFromRecentlyClosed(url) {
+  const history = await getRecentlyClosed();
+  const filtered = history.filter(item => item.url !== url);
+  await chrome.storage.local.set({ recentlyClosed: filtered });
+}
+
+/**
+ * clearRecentlyClosed()
+ *
+ * 清空所有历史记录
+ */
+async function clearRecentlyClosed() {
+  await chrome.storage.local.set({ recentlyClosed: [] });
+}
+
+
+/* ----------------------------------------------------------------
    UI HELPERS
    ---------------------------------------------------------------- */
 
 /**
  * playCloseSound()
+
+
  *
  * Plays a clean "swoosh" sound when tabs are closed.
  * Built entirely with the Web Audio API — no sound files needed.
@@ -502,8 +565,7 @@ function filterDomainGroups() {
       if (query) {
         const matchTitle = (tab.title || '').toLowerCase().includes(query);
         const matchUrl = (tab.url || '').toLowerCase().includes(query);
-        const matchDomain = (tab.url || '').includes(query);
-        if (!matchTitle && !matchUrl && !matchDomain) return false;
+        if (!matchTitle && !matchUrl) return false;
       }
 
       // 时间筛选
@@ -512,7 +574,7 @@ function filterDomainGroups() {
         const diffHours = (now - tab.lastAccessed) / 3600000;
         const diffDays = Math.floor(diffHours / 24);
 
-        if (filterTime === 'recent' && diffHours >= 0.083) return false; // >= 5分钟
+        if (filterTime === 'recent' && diffHours >= 0.083) return false; // 排除5分钟前的 → 保留5分钟内的
         if (filterTime === 'today' && diffHours >= 24) return false;
         if (filterTime === 'yesterday' && diffDays !== 1) return false;
         if (filterTime === 'old' && diffDays < 3) return false;
@@ -1155,6 +1217,42 @@ function renderArchiveItem(item) {
 }
 
 
+/**
+ * renderHistoryPanel()
+ *
+ * 渲染历史面板
+ */
+async function renderHistoryPanel() {
+  const panel = document.getElementById('historyColumn');
+  const list = document.getElementById('historyList');
+  const empty = document.getElementById('historyEmpty');
+
+  const history = await getRecentlyClosed();
+
+  if (history.length === 0) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  list.innerHTML = history.map(item => {
+    let domain = '';
+    try { domain = new URL(item.url).hostname; } catch {}
+    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+
+    return `
+      <div class="history-item" data-url="${item.url.replace(/"/g, '&quot;')}">
+        <img src="${faviconUrl}" class="favicon" alt="" onerror="this.style.display='none'">
+        <span class="title" title="${(item.title || '').replace(/"/g, '&quot;')}">${item.title || item.url}</span>
+        <span class="closed-at">${timeAgo(item.closedAt)}</span>
+        <button class="restore-btn" data-action="restore-from-history" data-url="${item.url.replace(/"/g, '&quot;')}" title="恢复">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15" /></svg>
+        </button>
+      </div>`;
+  }).join('');
+}
+
+
 /* ----------------------------------------------------------------
    MAIN DASHBOARD RENDERER
    ---------------------------------------------------------------- */
@@ -1305,10 +1403,16 @@ async function renderStaticDashboard() {
 
     // 填充域名筛选下拉框
     const filterDomainSelect = document.getElementById('filterDomain');
-    if (filterDomainSelect) {
+    if (filterDomainSelect && domainGroups.length > 0) {
+      const currentValue = filterDomainSelect.value; // 保存当前选择
       const domains = [...new Set(domainGroups.map(g => g.domain).filter(d => d !== '__landing-pages__'))];
       filterDomainSelect.innerHTML = '<option value="all">域名: 全部</option>' +
         domains.map(d => `<option value="${d}">${friendlyDomain(d)}</option>`).join('');
+      // 恢复选择（只在值仍然有效时）
+      if ([...domains, 'all'].includes(currentValue)) {
+        filterDomainSelect.value = currentValue;
+        filterDomain = currentValue; // 同步状态
+      }
     }
 
     // 初始不过滤，直接渲染
@@ -1328,6 +1432,9 @@ async function renderStaticDashboard() {
 
   // --- Render "Saved for Later" column ---
   await renderDeferredColumn();
+
+  // --- Render history panel ---
+  await renderHistoryPanel();
 }
 
 async function renderDashboard() {
@@ -1389,9 +1496,15 @@ document.addEventListener('click', async (e) => {
     const tabUrl = actionEl.dataset.tabUrl;
     if (!tabUrl) return;
 
-    // Close the tab in Chrome directly
+    // 在关闭标签前记录历史
     const allTabs = await chrome.tabs.query({});
-    const match   = allTabs.find(t => t.url === tabUrl);
+    const tabToClose = allTabs.find(t => t.url === tabUrl);
+    if (tabToClose) {
+      await addToRecentlyClosed(tabToClose);
+    }
+
+    // Close the tab in Chrome directly
+    const match = allTabs.find(t => t.url === tabUrl);
     if (match) await chrome.tabs.remove(match.id);
     await fetchOpenTabs();
 
@@ -1621,6 +1734,38 @@ document.addEventListener('click', (e) => {
   if (body) {
     body.style.display = body.style.display === 'none' ? 'block' : 'none';
   }
+});
+
+// ---- History item click — navigate to URL ----
+document.addEventListener('click', async (e) => {
+  const historyItem = e.target.closest('.history-item');
+  if (historyItem && !e.target.closest('.restore-btn')) {
+    const url = historyItem.dataset.url;
+    if (url) {
+      await chrome.tabs.create({ url });
+    }
+    return;
+  }
+
+  // Restore button
+  const restoreBtn = e.target.closest('.restore-btn');
+  if (restoreBtn) {
+    const url = restoreBtn.dataset.url;
+    if (url) {
+      await chrome.tabs.create({ url });
+      await removeFromRecentlyClosed(url);
+      await renderHistoryPanel();
+      showToast('已恢复');
+    }
+    return;
+  }
+});
+
+// ---- Clear history ----
+document.getElementById('clearHistoryBtn')?.addEventListener('click', async () => {
+  await clearRecentlyClosed();
+  await renderHistoryPanel();
+  showToast('历史已清空');
 });
 
 // ---- Archive search — filter archived items as user types ----

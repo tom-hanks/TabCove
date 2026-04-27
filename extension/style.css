@@ -1297,3 +1297,86 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   color: var(--muted);
   background: rgba(154, 145, 138, 0.1);
 }
+
+
+/* ── 历史面板 ── */
+.history-column {
+  width: 280px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 32px;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--warm-gray);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.history-item:hover {
+  border-color: var(--accent-sage);
+  background: rgba(90, 122, 98, 0.04);
+}
+
+.history-item .favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.history-item .title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item .closed-at {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.history-item .restore-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.history-item .restore-btn:hover {
+  opacity: 1;
+  color: var(--accent-sage);
+}
+
+.history-empty {
+  text-align: center;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.action-btn.danger.small {
+  font-size: 11px;
+  padding: 4px 10px;
+}
