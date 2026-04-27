@@ -711,6 +711,100 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   background: rgba(154, 145, 138, 0.1);
 }
 
+/* ── 搜索栏 ── */
+.search-bar {
+  margin-bottom: 24px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 14px;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 40px 12px 44px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  border: 1px solid var(--warm-gray);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input:focus {
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 0 3px rgba(200, 113, 58, 0.1);
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+}
+
+.search-clear {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+}
+
+.search-clear:hover {
+  color: var(--ink);
+}
+
+/* ── 筛选器 ── */
+.filter-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.filter-select {
+  padding: 6px 12px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  border: 1px solid var(--warm-gray);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+
+.filter-select:focus {
+  border-color: var(--accent-amber);
+}
+
+/* ── 无搜索结果 ── */
+.no-results {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--muted);
+}
+
+.no-results h3 {
+  font-family: 'Newsreader', serif;
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
 /* ================================================================
    MISSIONS EMPTY STATE
    Shown when all mission cards have been closed.

@@ -489,6 +489,78 @@ function checkAndShowEmptyState() {
 }
 
 /**
+ * filterDomainGroups()
+ *
+ * 根据搜索词和时间/域名筛选条件过滤分组
+ */
+function filterDomainGroups() {
+  const query = searchQuery.toLowerCase().trim();
+
+  filteredDomainGroups = domainGroups.map(group => {
+    const filteredTabs = group.tabs.filter(tab => {
+      // 搜索匹配
+      if (query) {
+        const matchTitle = (tab.title || '').toLowerCase().includes(query);
+        const matchUrl = (tab.url || '').toLowerCase().includes(query);
+        const matchDomain = (tab.url || '').includes(query);
+        if (!matchTitle && !matchUrl && !matchDomain) return false;
+      }
+
+      // 时间筛选
+      if (filterTime !== 'all' && tab.lastAccessed) {
+        const now = Date.now();
+        const diffHours = (now - tab.lastAccessed) / 3600000;
+        const diffDays = Math.floor(diffHours / 24);
+
+        if (filterTime === 'recent' && diffHours >= 0.083) return false; // >= 5分钟
+        if (filterTime === 'today' && diffHours >= 24) return false;
+        if (filterTime === 'yesterday' && diffDays !== 1) return false;
+        if (filterTime === 'old' && diffDays < 3) return false;
+      }
+
+      // 域名筛选
+      if (filterDomain !== 'all') {
+        try {
+          const tabDomain = new URL(tab.url).hostname;
+          if (tabDomain !== filterDomain) return false;
+        } catch { return false; }
+      }
+
+      return true;
+    });
+
+    return { ...group, tabs: filteredTabs };
+  }).filter(group => group.tabs.length > 0);
+
+  renderFilteredDomainGroups();
+}
+
+/**
+ * renderFilteredDomainGroups()
+ *
+ * 渲染筛选后的分组
+ */
+function renderFilteredDomainGroups() {
+  const missionsEl = document.getElementById('openTabsMissions');
+
+  if (filteredDomainGroups.length === 0 && (searchQuery || filterTime !== 'all' || filterDomain !== 'all')) {
+    missionsEl.innerHTML = `
+      <div class="no-results">
+        <h3>没有找到匹配的标签</h3>
+        <p>试试调整搜索词或筛选条件</p>
+      </div>`;
+    return;
+  }
+
+  if (filteredDomainGroups.length === 0) {
+    checkAndShowEmptyState();
+    return;
+  }
+
+  missionsEl.innerHTML = filteredDomainGroups.map(g => renderDomainCard(g)).join('');
+}
+
+/**
  * timeAgo(dateStr, justNowThresholdMins)
  *
  * Converts an ISO date string into a human-friendly relative time.
@@ -773,6 +845,14 @@ const ICONS = {
    IN-MEMORY STORE FOR OPEN-TAB GROUPS
    ---------------------------------------------------------------- */
 let domainGroups = [];
+
+/* ----------------------------------------------------------------
+   SEARCH & FILTER STATE
+   ---------------------------------------------------------------- */
+let searchQuery = '';
+let filterTime = 'all';
+let filterDomain = 'all';
+let filteredDomainGroups = [];
 
 
 /* ----------------------------------------------------------------
@@ -1222,7 +1302,18 @@ async function renderStaticDashboard() {
   if (domainGroups.length > 0 && openTabsSection) {
     if (openTabsSectionTitle) openTabsSectionTitle.textContent = '打开的标签页';
     openTabsSectionCount.innerHTML = `${domainGroups.length} 个域名 &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} 关闭全部 ${realTabs.length} 个标签</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
+
+    // 填充域名筛选下拉框
+    const filterDomainSelect = document.getElementById('filterDomain');
+    if (filterDomainSelect) {
+      const domains = [...new Set(domainGroups.map(g => g.domain).filter(d => d !== '__landing-pages__'))];
+      filterDomainSelect.innerHTML = '<option value="all">域名: 全部</option>' +
+        domains.map(d => `<option value="${d}">${friendlyDomain(d)}</option>`).join('');
+    }
+
+    // 初始不过滤，直接渲染
+    filteredDomainGroups = [...domainGroups];
+    renderFilteredDomainGroups();
     openTabsSection.style.display = 'block';
   } else if (openTabsSection) {
     openTabsSection.style.display = 'none';
@@ -1457,6 +1548,8 @@ document.addEventListener('click', async (e) => {
     if (group) {
       const tabIds = group.tabs.map(t => t.id);
       await createTabGroup(tabIds, groupLabel);
+    } else {
+      showToast('未找到分组');
     }
     return;
   }
@@ -1558,6 +1651,31 @@ document.addEventListener('input', async (e) => {
   } catch (err) {
     console.warn('[tab-out] Archive search failed:', err);
   }
+});
+
+
+// ── 搜索和筛选事件 ──
+document.getElementById('searchInput')?.addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  document.getElementById('searchClear').style.display = searchQuery ? 'block' : 'none';
+  filterDomainGroups();
+});
+
+document.getElementById('searchClear')?.addEventListener('click', () => {
+  document.getElementById('searchInput').value = '';
+  searchQuery = '';
+  document.getElementById('searchClear').style.display = 'none';
+  filterDomainGroups();
+});
+
+document.getElementById('filterTime')?.addEventListener('change', (e) => {
+  filterTime = e.target.value;
+  filterDomainGroups();
+});
+
+document.getElementById('filterDomain')?.addEventListener('change', (e) => {
+  filterDomain = e.target.value;
+  filterDomainGroups();
 });
 
 
