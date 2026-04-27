@@ -1387,3 +1387,17 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   outline: 2px solid var(--accent-amber);
   outline-offset: -2px;
 }
+
+/* ── 休眠标签样式 ── */
+.page-chip.is-suspended {
+  opacity: 0.6;
+}
+
+.chip-suspended-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(154, 145, 138, 0.2);
+  color: var(--muted);
+  margin-left: 4px;
+}

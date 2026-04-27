@@ -91,3 +91,69 @@ chrome.tabs.onUpdated.addListener(() => {
 
 // Run once immediately when the service worker first loads
 updateBadge();
+
+// ─── Open Tab Out page when clicking toolbar icon ──────────────────────────────
+
+chrome.action.onClicked.addListener(async () => {
+  const extensionId = chrome.runtime.id;
+  const tabOutUrl = `chrome-extension://${extensionId}/index.html`;
+
+  // Check if Tab Out page is already open
+  const tabs = await chrome.tabs.query({ url: tabOutUrl });
+
+  if (tabs.length > 0) {
+    // If already open, switch to that tab
+    await chrome.tabs.update(tabs[0].id, { active: true });
+    // Bring the window to front
+    await chrome.windows.update(tabs[0].windowId, { focused: true });
+  } else {
+    // Open a new tab with Tab Out
+    await chrome.tabs.create({ url: tabOutUrl });
+  }
+});
+
+// ─── Tab Suspender ───────────────────────────────────────────────
+
+const SUSPEND_CHECK_INTERVAL = 5 * 60 * 1000; // 每5分钟检测一次
+
+/**
+ * checkAndSuspendIdleTabs()
+ *
+ * 检测并休眠闲置的标签
+ */
+async function checkAndSuspendIdleTabs() {
+  try {
+    const tabs = await chrome.tabs.query({});
+
+    // 从存储中读取阈值
+    const { suspendThresholdHours = 2 } = await chrome.storage.local.get('suspendThresholdHours');
+    const thresholdMs = suspendThresholdHours * 60 * 60 * 1000;
+    const now = Date.now();
+
+    for (const tab of tabs) {
+      // 跳过固定标签、内部页面、Tab Out 页面
+      if (tab.pinned) continue;
+      if (!tab.url || tab.url.startsWith('chrome://')) continue;
+      if (tab.url.includes('chrome-extension://')) continue;
+
+      // 检查是否已休眠
+      if (tab.url.includes('/suspended.html')) continue;
+
+      // 检查是否超时
+      if (tab.lastAccessed && (now - tab.lastAccessed) >= thresholdMs) {
+        const extensionId = chrome.runtime.id;
+        const suspendedUrl = `chrome-extension://${extensionId}/suspended.html?url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`;
+
+        await chrome.tabs.update(tab.id, { url: suspendedUrl });
+      }
+    }
+  } catch (err) {
+    console.warn('[tab-out] Suspend check failed:', err);
+  }
+}
+
+// 定时检测
+setInterval(checkAndSuspendIdleTabs, SUSPEND_CHECK_INTERVAL);
+
+// 启动时检测一次
+checkAndSuspendIdleTabs();

@@ -371,6 +371,127 @@ async function clearRecentlyClosed() {
 
 
 /* ----------------------------------------------------------------
+   标签页休眠配置
+   ---------------------------------------------------------------- */
+
+const SUSPEND_THRESHOLD_HOURS = typeof LOCAL_SUSPEND_THRESHOLD_HOURS !== 'undefined'
+  ? LOCAL_SUSPEND_THRESHOLD_HOURS : 2;
+
+const SUSPENDED_TABS_KEY = 'suspendedTabs';
+
+/**
+ * getSuspendedTabs()
+ *
+ * 获取已休眠的标签列表
+ */
+async function getSuspendedTabs() {
+  const { [SUSPENDED_TABS_KEY]: suspended = [] } = await chrome.storage.local.get(SUSPENDED_TABS_KEY);
+  return suspended;
+}
+
+/**
+ * addSuspendedTab(tab)
+ *
+ * 添加标签到休眠列表
+ */
+async function addSuspendedTab(tab) {
+  const suspended = await getSuspendedTabs();
+  suspended.push({
+    url: tab.url,
+    title: tab.title,
+    suspendedAt: new Date().toISOString(),
+  });
+  await chrome.storage.local.set({ [SUSPENDED_TABS_KEY]: suspended });
+}
+
+/**
+ * removeSuspendedTab(url)
+ *
+ * 从休眠列表移除（恢复时调用）
+ */
+async function removeSuspendedTab(url) {
+  const suspended = await getSuspendedTabs();
+  const filtered = suspended.filter(t => t.url !== url);
+  await chrome.storage.local.set({ [SUSPENDED_TABS_KEY]: filtered });
+}
+
+/**
+ * shouldSuspendTab(tab)
+ *
+ * 判断标签是否应该被休眠
+ */
+function shouldSuspendTab(tab) {
+  if (tab.pinned) return false; // 固定标签不休眠
+  if (!tab.lastAccessed) return false;
+
+  const diffHours = (Date.now() - tab.lastAccessed) / 3600000;
+  return diffHours >= SUSPEND_THRESHOLD_HOURS;
+}
+
+/**
+ * suspendTab(tab)
+ *
+ * 休眠单个标签
+ */
+async function suspendTab(tab) {
+  const extensionId = chrome.runtime.id;
+  const suspendedUrl = `chrome-extension://${extensionId}/suspended.html?url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`;
+
+  await chrome.tabs.update(tab.id, { url: suspendedUrl });
+  await addSuspendedTab(tab);
+  await removeFromRecentlyClosed(tab.url); // 从历史中移除
+}
+
+/**
+ * unsuspendTab(suspendedItem)
+ *
+ * 恢复休眠的标签
+ */
+async function unsuspendTab(suspendedItem) {
+  await chrome.tabs.create({ url: suspendedItem.url });
+  await removeSuspendedTab(suspendedItem.url);
+  showToast('页面已恢复');
+}
+
+/**
+ * checkAndSuspendTabs()
+ *
+ * 检测并休眠符合条件的标签（每5分钟调用一次）
+ */
+async function checkAndSuspendTabs() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    const toSuspend = tabs.filter(shouldSuspendTab);
+
+    for (const tab of toSuspend) {
+      // 跳过 Tab Out 自己的页面
+      if (tab.url?.includes('chrome-extension://')) continue;
+      await suspendTab(tab);
+    }
+  } catch (err) {
+    console.warn('[tab-out] Suspend check failed:', err);
+  }
+}
+
+// 标记 UI 显示（如果当前标签已休眠）
+function markSuspendedTabs() {
+  getSuspendedTabs().then(suspended => {
+    const suspendedUrls = new Set(suspended.map(s => s.url));
+    document.querySelectorAll('.page-chip').forEach(chip => {
+      const url = chip.dataset.tabUrl;
+      if (url && suspendedUrls.has(url)) {
+        chip.classList.add('is-suspended');
+        const badge = document.createElement('span');
+        badge.className = 'chip-suspended-badge';
+        badge.textContent = '已休眠';
+        chip.appendChild(badge);
+      }
+    });
+  });
+}
+
+
+/* ----------------------------------------------------------------
    UI HELPERS
    ---------------------------------------------------------------- */
 
@@ -1861,7 +1982,7 @@ function showKeyboardHints() {
   const hasSeen = localStorage.getItem('tabout-keyboard-hints-seen');
   if (!hasSeen) {
     setTimeout(() => {
-      showToast('按 / 键搜索 · d 保存 · x 关闭 · j/k 导航', 4000);
+      showToast('按 / 键搜索 · d 保存 · x 关闭 · j/k 导航');
       localStorage.setItem('tabout-keyboard-hints-seen', 'true');
     }, 1000);
   }

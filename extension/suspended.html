@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>标签页已休眠 - Tab Out</title>
+  <style>
+    :root {
+      --ink: #1a1613;
+      --paper: #f8f5f0;
+      --muted: #9a918a;
+      --accent-sage: #5a7a62;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', -apple-system, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .container {
+      text-align: center;
+      max-width: 400px;
+    }
+    .icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 24px;
+      background: rgba(90, 122, 98, 0.1);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon svg {
+      width: 32px;
+      height: 32px;
+      color: var(--accent-sage);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+    .title {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 24px;
+      word-break: break-all;
+    }
+    .restore-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      background: var(--accent-sage);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .restore-btn:hover {
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+      </svg>
+    </div>
+    <h1>标签页已休眠</h1>
+    <p class="title" id="pageTitle">—</p>
+    <button class="restore-btn" id="restoreBtn">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+      </svg>
+      恢复页面
+    </button>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get('url');
+    const title = params.get('title') || url;
+
+    document.getElementById('pageTitle').textContent = decodeURIComponent(title);
+    document.getElementById('restoreBtn').addEventListener('click', () => {
+      if (url) {
+        window.location.href = decodeURIComponent(url);
+      }
+    });
+  </script>
+</body>
+</html>
