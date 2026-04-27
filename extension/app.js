@@ -198,6 +198,23 @@ async function closeTabOutDupes() {
   await fetchOpenTabs();
 }
 
+/**
+ * createTabGroup(tabIds, groupTitle)
+ *
+ * Creates a native Chrome tab group from the given tab IDs.
+ */
+async function createTabGroup(tabIds, groupTitle) {
+  if (!tabIds || tabIds.length === 0) return;
+  try {
+    const groupId = await chrome.tabs.group({ tabIds });
+    await chrome.tabGroups.update(groupId, { title: groupTitle, collapsed: false });
+    showToast(`已创建「${groupTitle}」分组`);
+  } catch (err) {
+    console.error('[tab-out] Failed to create tab group:', err);
+    showToast('创建分组失败');
+  }
+}
+
 
 /* ----------------------------------------------------------------
    SAVED FOR LATER — chrome.storage.local
@@ -472,12 +489,14 @@ function checkAndShowEmptyState() {
 }
 
 /**
- * timeAgo(dateStr)
+ * timeAgo(dateStr, justNowThresholdMins)
  *
  * Converts an ISO date string into a human-friendly relative time.
  * "2026-04-04T10:00:00Z" → "2 hrs ago" or "yesterday"
+ * @param {string} dateStr - ISO date string
+ * @param {number} [justNowThresholdMins=1] - minutes threshold for "刚刚"
  */
-function timeAgo(dateStr) {
+function timeAgo(dateStr, justNowThresholdMins = 1) {
   if (!dateStr) return '';
   const then = new Date(dateStr);
   const now  = new Date();
@@ -485,7 +504,7 @@ function timeAgo(dateStr) {
   const diffHours = Math.floor((now - then) / 3600000);
   const diffDays  = Math.floor((now - then) / 86400000);
 
-  if (diffMins < 1)   return '刚刚';
+  if (diffMins < justNowThresholdMins) return '刚刚';
   if (diffMins < 60)  return diffMins + ' 分钟前';
   if (diffHours < 24) return diffHours + ' 小时前';
   if (diffDays === 1) return '昨天';
@@ -495,7 +514,7 @@ function timeAgo(dateStr) {
 /**
  * timeAgoForTab(lastAccessedMs)
  *
- * 将毫秒时间戳转换为相对时间，与 timeAgo 类似但更适合标签页
+ * 将毫秒时间戳转换为相对时间，委托给 timeAgo 但扩展了更细的粒度
  */
 function timeAgoForTab(lastAccessedMs) {
   if (!lastAccessedMs) return '';
@@ -505,12 +524,14 @@ function timeAgoForTab(lastAccessedMs) {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMs < 300000)    return '刚刚';      // < 5分钟
-  if (diffMins < 60)      return diffMins + ' 分钟前';
-  if (diffHours < 24)    return diffHours + ' 小时前';
-  if (diffDays === 1)     return '昨天';
-  if (diffDays < 7)       return diffDays + ' 天前';
-  if (diffDays < 30)      return Math.floor(diffDays / 7) + ' 周前';
+  // 5 分钟阈值的 "刚刚"
+  if (diffMins < 5) return '刚刚';
+  // 调用 timeAgo 但使用 1 分钟阈值（因为已处理 < 5 分钟的情况）
+  if (diffMins < 60) return diffMins + ' 分钟前';
+  if (diffHours < 24) return diffHours + ' 小时前';
+  if (diffDays === 1) return '昨天';
+  if (diffDays < 7) return diffDays + ' 天前';
+  if (diffDays < 30) return Math.floor(diffDays / 7) + ' 周前';
   return Math.floor(diffDays / 30) + ' 月前';
 }
 
@@ -522,9 +543,9 @@ function timeAgoForTab(lastAccessedMs) {
 function getTimeColor(lastAccessedMs) {
   if (!lastAccessedMs) return 'time-neutral';
   const diffHours = (Date.now() - lastAccessedMs) / 3600000;
-  if (diffHours < 1)    return 'time-recent';   // 绿色
-  if (diffHours < 24)   return 'time-medium';    // 橙色
-  return 'time-old';                             // 红色
+  if (diffHours < TIME_THRESHOLD_RECENT) return 'time-recent'; // 绿色
+  if (diffHours < TIME_THRESHOLD_MEDIUM)  return 'time-medium'; // 橙色
+  return 'time-old';                                        // 红色
 }
 
 /**
@@ -555,8 +576,12 @@ function getDateDisplay() {
 
 
 /* ----------------------------------------------------------------
-   DOMAIN & TITLE CLEANUP HELPERS
+   TIME & COLOR HELPERS
    ---------------------------------------------------------------- */
+
+// Thresholds for getTimeColor (in hours)
+const TIME_THRESHOLD_RECENT = 1;   // < 1 hour  → green
+const TIME_THRESHOLD_MEDIUM  = 24;  // < 24 hours → orange
 
 // Map of known hostnames → friendly display names.
 const FRIENDLY_DOMAINS = {
@@ -740,6 +765,7 @@ const ICONS = {
   close:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
   archive: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>`,
   focus:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" /></svg>`,
+  group:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c.1 0 .201-.032.283-.09M7.5 14.25 5.106 5.272C4.41 5.983 4.5 6.56 4.5 7.25v1.5m12-3-3 3-3-3m-15.75 0H5.625c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h14.625" /></svg>`,
 };
 
 
@@ -794,6 +820,39 @@ function checkTabOutDupes() {
 
 
 /* ----------------------------------------------------------------
+   CHIP ELEMENT BUILDER
+   ---------------------------------------------------------------- */
+
+/**
+ * buildPageChipElement(tab, label, chipClass, dupeTag)
+ *
+ * 构建单个 page-chip 的 HTML，消解 buildOverflowChips 与 renderDomainCard 之间的重复
+ */
+function buildPageChipElement(tab, label, chipClass, dupeTag) {
+  const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
+  const safeTitle = label.replace(/"/g, '&quot;');
+  let domain = '';
+  try { domain = new URL(tab.url).hostname; } catch {}
+  const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
+  const timeTag = tab.lastAccessed
+    ? `<span class="chip-time ${getTimeColor(tab.lastAccessed)}">${timeAgoForTab(tab.lastAccessed)}</span>`
+    : '';
+  return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
+    ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
+    <span class="chip-text">${label}</span>${timeTag}${dupeTag}
+    <div class="chip-actions">
+      <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后保存">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+      </button>
+      <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭此标签">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+  </div>`;
+}
+
+
+/* ----------------------------------------------------------------
    OVERFLOW CHIPS ("+N more" expand button in domain cards)
    ---------------------------------------------------------------- */
 
@@ -803,24 +862,7 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
     const count    = urlCounts[tab.url] || 1;
     const dupeTag  = count > 1 ? ` <span class="chip-dupe-badge">(${count}x)</span>` : '';
     const chipClass = count > 1 ? ' chip-has-dupes' : '';
-    const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
-    const safeTitle = label.replace(/"/g, '&quot;');
-    let domain = '';
-    try { domain = new URL(tab.url).hostname; } catch {}
-    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
-    const timeTag  = tab.lastAccessed ? `<span class="chip-time ${getTimeColor(tab.lastAccessed)}">${timeAgoForTab(tab.lastAccessed)}</span>` : '';
-    return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
-      ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
-      <span class="chip-text">${label}</span>${timeTag}${dupeTag}
-      <div class="chip-actions">
-        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后保存">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
-        </button>
-        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭此标签">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-    </div>`;
+    return buildPageChipElement(tab, label, chipClass, dupeTag);
   }).join('');
 
   return `
@@ -882,33 +924,20 @@ function renderDomainCard(group) {
       const parsed = new URL(tab.url);
       if (parsed.hostname === 'localhost' && parsed.port) label = `${parsed.port} ${label}`;
     } catch {}
-    const count    = urlCounts[tab.url];
-    const dupeTag  = count > 1 ? ` <span class="chip-dupe-badge">(${count}x)</span>` : '';
+    const count     = urlCounts[tab.url];
+    const dupeTag   = count > 1 ? ` <span class="chip-dupe-badge">(${count}x)</span>` : '';
     const chipClass = count > 1 ? ' chip-has-dupes' : '';
-    const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
-    const safeTitle = label.replace(/"/g, '&quot;');
-    let domain = '';
-    try { domain = new URL(tab.url).hostname; } catch {}
-    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
-    const timeTag  = tab.lastAccessed ? `<span class="chip-time ${getTimeColor(tab.lastAccessed)}">${timeAgoForTab(tab.lastAccessed)}</span>` : '';
-    return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
-      ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
-      <span class="chip-text">${label}</span>${timeTag}${dupeTag}
-      <div class="chip-actions">
-        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后保存">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
-        </button>
-        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭此标签">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-    </div>`;
+    return buildPageChipElement(tab, label, chipClass, dupeTag);
   }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts) : '');
 
   let actionsHtml = `
     <button class="action-btn close-tabs" data-action="close-domain-tabs" data-domain-id="${stableId}">
       ${ICONS.close}
       关闭全部 ${tabCount} 个标签
+    </button>
+    <button class="action-btn group-tabs" data-action="group-domain-tabs" data-domain-id="${stableId}" data-group-label="${isLanding ? '主页' : (group.label || friendlyDomain(group.domain))}">
+      ${ICONS.group}
+      创建标签组
     </button>`;
 
   if (hasDupes) {
@@ -1415,6 +1444,20 @@ document.addEventListener('click', async (e) => {
 
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
+    return;
+  }
+
+  // ---- Create native tab group ----
+  if (action === 'group-domain-tabs') {
+    const domainId = actionEl.dataset.domainId;
+    const groupLabel = actionEl.dataset.groupLabel;
+    const group = domainGroups.find(g => {
+      return 'domain-' + g.domain.replace(/[^a-z0-9]/g, '-') === domainId;
+    });
+    if (group) {
+      const tabIds = group.tabs.map(t => t.id);
+      await createTabGroup(tabIds, groupLabel);
+    }
     return;
   }
 

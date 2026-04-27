@@ -555,6 +555,23 @@ header {
   border-color: var(--accent-sage);
 }
 
+/* ── 创建标签组按钮 ── */
+.action-btn.group-tabs {
+  border-color: rgba(90, 122, 98, 0.3);
+  color: var(--accent-sage);
+  background: rgba(90, 122, 98, 0.04);
+}
+
+.action-btn.group-tabs:hover {
+  background: rgba(90, 122, 98, 0.1);
+  border-color: var(--accent-sage);
+}
+
+.action-btn.group-tabs svg {
+  width: 14px;
+  height: 14px;
+}
+
 .action-btn.danger {
   color: var(--status-abandoned);
 }
