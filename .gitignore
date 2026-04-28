@@ -4,5 +4,15 @@ node_modules/
 .DS_Store
 docs/superpowers/
 
+# Claude Code
+.claude/
+
+# Superpowers
+.superpowers/
+
+# Design previews — local only
+design-preview.html
+design-preview-dark.html
+
 # Personal config (landing page patterns, etc.) — never push to GitHub
 extension/config.local.js
