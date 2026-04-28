@@ -3,169 +3,144 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tab Out - 标签管理</title>
-
-  <!-- Google Fonts: Newsreader (for headings/numbers) + DM Sans (for body text) -->
+  <title>TabCove - 标签管理</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="container">
-
-
-
-  <!-- ================================================================
-       HEADER — greeting on the left
-       ================================================================ -->
-  <header>
-    <div class="header-left">
-      <!-- "Good afternoon" — written by getGreeting() in app.js -->
-      <h1 id="greeting"></h1>
-      <!-- "Friday, April 4, 2026" — written by getDateDisplay() in app.js -->
-      <div class="date" id="dateDisplay"></div>
-    </div>
-  </header>
-
-  <!-- ================================================================
-       TAB OUT DUPES BANNER — appears when you have extra Tab Out tabs open
-       Hidden by default; app.js shows it when dupeTabOutCount > 1
-       ================================================================ -->
-  <div class="tab-cleanup-banner" id="tabOutDupeBanner" style="display:none">
-    <div class="tab-cleanup-left">
-      <div class="tab-cleanup-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
-        </svg>
-      </div>
-      <div class="tab-cleanup-text">
-        当前有 <strong id="tabOutDupeCount"></strong> 个 Tab Out 标签页。保留这一个？
-      </div>
-    </div>
-    <button class="tab-cleanup-btn" data-action="close-tabout-dupes">关闭多余的</button>
-  </div>
-
-  <!-- 搜索栏 -->
-<div class="search-bar" id="searchBar">
-  <div class="search-input-wrapper">
-    <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-    </svg>
-    <input type="text" id="searchInput" class="search-input" placeholder="搜索标签...">
-    <button class="search-clear" id="searchClear" style="display:none">×</button>
-  </div>
-  <div class="filter-row">
-    <select id="filterTime" class="filter-select">
-      <option value="all">时间: 全部</option>
-      <option value="recent">刚刚</option>
-      <option value="today">今天</option>
-      <option value="yesterday">昨天</option>
-      <option value="old">超过3天</option>
-    </select>
-    <select id="filterDomain" class="filter-select">
-      <option value="all">域名: 全部</option>
-    </select>
-  </div>
-</div>
-
-  <!-- ================================================================
-       MAIN CONTENT AREA — two-column layout
-       Left: open tabs (domain/mission cards)
-       Right: saved for later checklist
-       The right column only renders when it has items (JS controls this)
-       ================================================================ -->
-  <div class="dashboard-columns" id="dashboardColumns">
-
-    <!-- LEFT COLUMN: Open tabs -->
-    <div class="active-section" id="openTabsSection" style="display:none">
-      <div class="section-header">
-        <h2 id="openTabsSectionTitle">当前</h2>
-        <div class="section-line"></div>
-        <div class="section-count" id="openTabsSectionCount"></div>
-      </div>
-      <div class="missions" id="openTabsMissions"></div>
-    </div>
-
-    <!-- RIGHT COLUMN: Saved for Later checklist -->
-    <div class="deferred-column" id="deferredColumn" style="display:none">
-      <div class="section-header">
-        <h2>稍后阅读</h2>
-        <div class="section-line"></div>
-        <div class="section-count" id="deferredCount"></div>
+  <div class="app">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-icon"></div>
+        <span>TabCove</span>
       </div>
 
-      <!-- Active checklist items — injected by renderDeferredList() in app.js -->
-      <div class="deferred-list" id="deferredList"></div>
+      <nav class="nav">
+        <div class="nav-item active" data-view="all">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+          </svg>
+          全部标签
+          <span class="nav-count" id="totalCount">0</span>
+        </div>
 
-      <!-- Empty state — shown when no active deferred tabs -->
-      <div class="deferred-empty" id="deferredEmpty" style="display:none">
-        暂无保存，活在当下。
+        <div class="nav-item" data-view="saved">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+          </svg>
+          稍后阅读
+          <span class="nav-count" id="savedCount">0</span>
+        </div>
+
+        <div class="nav-item" data-view="suspended">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.143 16.143a3 3 0 1 0 4.243 4.243m3.431-7.426a7 7 0 1 1-12.007 0M12 21v-8.25" />
+          </svg>
+          已休眠
+          <span class="nav-count" id="suspendedCount">0</span>
+        </div>
+
+        <div class="nav-item" data-view="history">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          最近关闭
+          <span class="nav-count" id="historyCount">0</span>
+        </div>
+      </nav>
+
+      <div class="nav-section">
+        <div class="nav-label">域名</div>
+        <div class="nav-domains" id="navDomains"></div>
       </div>
 
-      <!-- Archive section — collapsed by default -->
-      <div class="deferred-archive" id="deferredArchive" style="display:none">
-        <button class="archive-toggle" id="archiveToggle">
-          <svg class="archive-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-          归档
-          <span class="archive-count" id="archiveCount"></span>
-        </button>
-        <div class="archive-body" id="archiveBody" style="display:none">
-          <input type="text" class="archive-search" id="archiveSearch" placeholder="搜索已归档的标签...">
-          <div class="archive-list" id="archiveList"></div>
+      <div class="sidebar-footer">
+        <div class="nav-item" data-action="open-settings">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 0 .431 1.31c.103.38.249.74.432 1.08l1.002.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1-.43-1.31c-.104-.379-.25-.74-.433-1.08l-1.002-.827c-.424-.35-.534-.955-.26-1.43l1.298-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+          </svg>
+          设置
         </div>
       </div>
-    </div>
+    </aside>
 
-    <!-- 历史面板 -->
-    <div class="history-column" id="historyColumn" style="display:none">
-      <div class="section-header">
-        <h2>最近关闭</h2>
-        <div class="section-line"></div>
-        <button class="action-btn danger small" id="clearHistoryBtn">清空</button>
+    <!-- 主内容区 -->
+    <main class="main">
+      <header class="header">
+        <div class="header-left">
+          <h1 id="viewTitle">全部标签</h1>
+          <div class="meta" id="viewMeta">0 个标签</div>
+        </div>
+        <div class="header-actions">
+          <div class="accent-switcher">
+            <button class="accent-btn active" data-accent="blue" title="蓝色" style="background: #3b82f6"></button>
+            <button class="accent-btn" data-accent="sky" title="天蓝" style="background: #0ea5e9"></button>
+            <button class="accent-btn" data-accent="violet" title="紫色" style="background: #8b5cf6"></button>
+            <button class="accent-btn" data-accent="emerald" title="翠绿" style="background: #10b981"></button>
+            <button class="accent-btn" data-accent="amber" title="琥珀" style="background: #f59e0b"></button>
+            <button class="accent-btn" data-accent="rose" title="玫红" style="background: #f43f5e"></button>
+          </div>
+          <div class="theme-switcher">
+            <button class="theme-btn" data-theme="light" title="浅色">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+              </svg>
+            </button>
+            <button class="theme-btn active" data-theme="dark" title="深色">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+              </svg>
+            </button>
+          </div>
+          <button class="btn secondary" id="refreshBtn">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            刷新
+          </button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- 搜索栏 -->
+        <div class="search-bar">
+          <div class="search-input-wrap">
+            <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <input type="text" id="searchInput" class="search-input" placeholder="搜索标签...">
+          </div>
+        </div>
+
+        <!-- 标签列表区域 -->
+        <div class="tab-list" id="tabList"></div>
+
+        <!-- 空白状态 -->
+        <div class="empty-state" id="emptyState" style="display:none">
+          <div class="empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-17.5 0a1.5 1.5 0 0 0-1.5 1.5v6a1.5 1.5 0 0 0 1.5 1.5h15a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5m-17.5 0V5.25A2.25 2.25 0 0 1 6 3h12a2.25 2.25 0 0 1 2.25 2.25v8.25" />
+            </svg>
+          </div>
+          <div class="empty-title">暂无标签</div>
+          <div class="empty-subtitle">开一些标签页吧</div>
+        </div>
       </div>
-      <div class="history-list" id="historyList"></div>
-      <div class="history-empty" id="historyEmpty" style="display:none">
-        暂无关闭记录
-      </div>
-    </div>
+    </main>
+  </div>
 
-  </div><!-- end .dashboard-columns -->
+  <!-- Toast -->
+  <div class="toast" id="toast">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+    </svg>
+    <span id="toastText"></span>
+  </div>
 
-  <!-- ================================================================
-       FOOTER — global stats + refresh control
-       ================================================================ -->
-  <footer>
-    <div class="footer-stats">
-      <div class="stat">
-        <div class="stat-num" id="statTabs">—</div>
-        <div class="stat-label">打开的标签</div>
-      </div>
-    </div>
-    <div class="last-refresh">
-      <span style="color: var(--muted); font-size: 11px;"><a href="https://github.com/zarazhangrui/tab-out" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Tab Out</a> by <a href="https://x.com/zarazhangrui" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Zara</a></span>
-    </div>
-  </footer>
-
-</div><!-- end .container -->
-
-<!-- ================================================================
-     TOAST — floats above everything, used for action confirmations
-     Hidden by default via CSS (opacity:0, translateY)
-     ================================================================ -->
-<div class="toast" id="toast">
-  <!-- Checkmark circle icon (Heroicons outline) -->
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-  </svg>
-  <span id="toastText"></span>
-</div>
-
-<!-- Personal config (gitignored) — defines LOCAL_LANDING_PAGE_PATTERNS etc. -->
-<!-- If the file doesn't exist, that's fine — app.js uses sensible defaults. -->
-<script src="config.local.js" onerror="/* no personal config, that's fine */"></script>
-
-<!-- Main dashboard logic — loads last so the DOM is ready -->
-<script src="app.js"></script>
+  <script src="config.local.js" onerror=""></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TabCove - 新设计预览</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Satoshi:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --surface: #FFFFFF;
+      --text: #1A1A1A;
+      --text-secondary: #6B6B6B;
+      --text-muted: #9B9B9B;
+      --border: #E8E8E6;
+      --accent: #2D5A45;
+      --accent-light: rgba(45, 90, 69, 0.08);
+      --sage: #5A7A62;
+      --amber: #B87333;
+      --rose: #A65D5D;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Satoshi', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 40px 80px;
+    }
+
+    /* Header */
+    header {
+      margin-bottom: 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .greeting {
+      font-family: 'Instrument Serif', serif;
+      font-size: 32px;
+      font-weight: 400;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+
+    .date {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      letter-spacing: 0.3px;
+    }
+
+    .tab-count {
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tab-count-num {
+      font-family: 'Instrument Serif', serif;
+      font-size: 24px;
+      color: var(--text);
+    }
+
+    /* Search Bar - New Design */
+    .search-section {
+      margin-bottom: 32px;
+    }
+
+    .search-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 8px 16px;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s, border-color 0.2s;
+    }
+
+    .search-bar:focus-within {
+      border-color: var(--accent);
+      box-shadow: var(--shadow-md), 0 0 0 3px var(--accent-light);
+    }
+
+    .search-icon {
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .search-input {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-size: 14px;
+      font-family: inherit;
+      background: transparent;
+      color: var(--text);
+    }
+
+    .search-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .filter-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--text-muted);
+      color: var(--text);
+    }
+
+    .filter-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* Domain Groups - New Card Design */
+    .domains {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .domain-group {
+      background: var(--surface);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid transparent;
+      transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+    }
+
+    .domain-group:hover {
+      box-shadow: var(--shadow-md);
+      border-color: var(--border);
+      transform: translateY(-1px);
+    }
+
+    .domain-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .domain-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .domain-favicon {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      background: var(--bg);
+    }
+
+    .domain-name {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+    }
+
+    .domain-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .domain-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .domain-btn {
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      font-size: 11px;
+      font-family: inherit;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .domain-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+
+    .domain-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .domain-btn.primary:hover {
+      background: #245040;
+    }
+
+    .domain-btn svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    /* Tab List */
+    .tab-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .tab-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .tab-item:hover {
+      background: var(--bg);
+    }
+
+    .tab-item:hover .tab-actions {
+      opacity: 1;
+    }
+
+    .tab-favicon {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .tab-title {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tab-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .tab-time.recent {
+      color: var(--sage);
+      background: rgba(90, 122, 98, 0.1);
+    }
+
+    .tab-time.medium {
+      color: var(--amber);
+      background: rgba(184, 115, 51, 0.1);
+    }
+
+    .tab-time.old {
+      color: var(--rose);
+      background: rgba(166, 93, 93, 0.1);
+    }
+
+    .tab-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .tab-action {
+      width: 26px;
+      height: 26px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .tab-action:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .tab-action.save:hover {
+      color: var(--sage);
+    }
+
+    .tab-action.close:hover {
+      color: var(--rose);
+    }
+
+    .tab-action svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* Sidebar - Deferred & History */
+    .sidebar {
+      display: flex;
+      gap: 16px;
+      margin-top: 32px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+
+    .sidebar-column {
+      background: var(--surface);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+      min-width: 240px;
+    }
+
+    .sidebar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .sidebar-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sidebar-title svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-muted);
+    }
+
+    .sidebar-count {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .sidebar-item:hover {
+      background: var(--bg);
+    }
+
+    .sidebar-item-title {
+      flex: 1;
+      font-size: 12px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .sidebar-item-time {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .sidebar-empty {
+      text-align: center;
+      padding: 24px 0;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .footer-link {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    .footer-link:hover {
+      color: var(--text);
+    }
+
+    /* Animations */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    header { animation: fadeUp 0.5s ease both; }
+    .search-section { animation: fadeUp 0.5s ease 0.1s both; }
+    .domain-group:nth-child(1) { animation: fadeUp 0.5s ease 0.15s both; }
+    .domain-group:nth-child(2) { animation: fadeUp 0.5s ease 0.2s both; }
+    .domain-group:nth-child(3) { animation: fadeUp 0.5s ease 0.25s both; }
+    .sidebar { animation: fadeUp 0.5s ease 0.3s both; }
+    footer { animation: fadeUp 0.5s ease 0.35s both; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .container { padding: 32px 20px 60px; }
+      .greeting { font-size: 26px; }
+      .sidebar { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div>
+        <h1 class="greeting">下午好</h1>
+        <div class="date">2026年4月27日 · 周一</div>
+      </div>
+      <div class="tab-count">
+        <span class="tab-count-num">47</span>
+        <span>个打开的标签</span>
+      </div>
+    </header>
+
+    <!-- Search -->
+    <div class="search-section">
+      <div class="search-bar">
+        <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+        </svg>
+        <input type="text" class="search-input" placeholder="搜索标签页...">
+        <button class="filter-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A18.683 18.683 0 0 1 12 3Z" />
+          </svg>
+          筛选
+        </button>
+      </div>
+    </div>
+
+    <!-- Domain Groups -->
+    <div class="domains">
+      <!-- GitHub -->
+      <div class="domain-group">
+        <div class="domain-header">
+          <div class="domain-info">
+            <img class="domain-favicon" src="https://www.google.com/s2/favicons?domain=github.com&sz=32" alt="">
+            <span class="domain-name">GitHub</span>
+            <span class="domain-count">12 个标签</span>
+          </div>
+          <div class="domain-actions">
+            <button class="domain-btn">关闭全部</button>
+            <button class="domain-btn primary">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c.1 0 .201-.032.283-.09M7.5 14.25 5.106 5.272C4.41 5.983 4.5 6.56 4.5 7.25v1.5m12-3-3 3-3-3m-15.75 0H5.625c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h14.625" />
+              </svg>
+              创建分组
+            </button>
+          </div>
+        </div>
+        <div class="tab-list">
+          <div class="tab-item">
+            <img class="tab-favicon" src="https://www.google.com/s2/favicons?domain=github.com&sz=16" alt="">
+            <span class="tab-title">microsoft/vscode: Visual Studio Code - Open Source</span>
+            <span class="tab-time recent">3 分钟前</span>
+            <div class="tab-actions">
+              <button class="tab-action save">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                </svg>
+              </button>
+              <button class="tab-action close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="tab-item">
+            <img class="tab-favicon" src="https://www.google.com/s2/favicons?domain=github.com&sz=16" alt="">
+            <span class="tab-title">anthropics/claude-code: A CLI tool for using Claude</span>
+            <span class="tab-time recent">15 分钟前</span>
+            <div class="tab-actions">
+              <button class="tab-action save">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                </svg>
+              </button>
+              <button class="tab-action close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="tab-item">
+            <img class="tab-favicon" src="https://www.google.com/s2/favicons?domain=github.com&sz=16" alt="">
+            <span class="tab-title">OpenAI / ChatGPT</span>
+            <span class="tab-time medium">2 小时前</span>
+            <div class="tab-actions">
+              <button class="tab-action save">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                </svg>
+              </button>
+              <button class="tab-action close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- YouTube -->
+      <div class="domain-group">
+        <div class="domain-header">
+          <div class="domain-info">
+            <img class="domain-favicon" src="https://www.google.com/s2/favicons?domain=youtube.com&sz=32" alt="">
+            <span class="domain-name">YouTube</span>
+            <span class="domain-count">5 个标签</span>
+          </div>
+          <div class="domain-actions">
+            <button class="domain-btn">关闭全部</button>
+            <button class="domain-btn primary">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c.1 0 .201-.032.283-.09M7.5 14.25 5.106 5.272C4.41 5.983 4.5 6.56 4.5 7.25v1.5m12-3-3 3-3-3m-15.75 0H5.625c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h14.625" />
+              </svg>
+              创建分组
+            </button>
+          </div>
+        </div>
+        <div class="tab-list">
+          <div class="tab-item">
+            <img class="tab-favicon" src="https://www.google.com/s2/favicons?domain=youtube.com&sz=16" alt="">
+            <span class="tab-title">React 18 Tutorial - Complete Beginner's Guide</span>
+            <span class="tab-time old">3 天前</span>
+            <div class="tab-actions">
+              <button class="tab-action save">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                </svg>
+              </button>
+              <button class="tab-action close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <!-- Deferred -->
+      <div class="sidebar-column">
+        <div class="sidebar-header">
+          <div class="sidebar-title">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+            </svg>
+            稍后阅读
+          </div>
+          <span class="sidebar-count">3</span>
+        </div>
+        <div class="tab-list">
+          <div class="sidebar-item">
+            <span class="sidebar-item-title">TypeScript Handbook 中文版</span>
+            <span class="sidebar-item-time">昨天</span>
+          </div>
+          <div class="sidebar-item">
+            <span class="sidebar-item-title">CSS Grid 完整指南</span>
+            <span class="sidebar-item-time">2 天前</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="sidebar-column">
+        <div class="sidebar-header">
+          <div class="sidebar-title">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+            最近关闭
+          </div>
+          <span class="sidebar-count">5</span>
+        </div>
+        <div class="tab-list">
+          <div class="sidebar-item">
+            <span class="sidebar-item-title">Vite 配置详解</span>
+            <span class="sidebar-item-time">10 分钟前</span>
+          </div>
+          <div class="sidebar-item">
+            <span class="sidebar-item-title">Rust 异步编程</span>
+            <span class="sidebar-item-time">1 小时前</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <a href="#" class="footer-link">TabCove by Zara</a>
+      <a href="#" class="footer-link">反馈问题</a>
+    </footer>
+  </div>
+</body>
+</html>

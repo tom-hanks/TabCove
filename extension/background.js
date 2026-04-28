@@ -1,7 +1,7 @@
 /**
  * background.js — Service Worker for Badge Updates
  *
- * Chrome's "always-on" background script for Tab Out.
+ * Chrome's "always-on" background script for TabCove.
  * Its only job: keep the toolbar badge showing the current open tab count.
  *
  * Since we no longer have a server, we query chrome.tabs directly.
@@ -91,3 +91,23 @@ chrome.tabs.onUpdated.addListener(() => {
 
 // Run once immediately when the service worker first loads
 updateBadge();
+
+// ─── Open TabCove page when clicking toolbar icon ──────────────────────────────
+
+chrome.action.onClicked.addListener(async () => {
+  const extensionId = chrome.runtime.id;
+  const tabOutUrl = `chrome-extension://${extensionId}/index.html`;
+
+  // Check if TabCove page is already open
+  const tabs = await chrome.tabs.query({ url: tabOutUrl });
+
+  if (tabs.length > 0) {
+    // If already open, switch to that tab
+    await chrome.tabs.update(tabs[0].id, { active: true });
+    // Bring the window to front
+    await chrome.windows.update(tabs[0].windowId, { focused: true });
+  } else {
+    // Open a new tab with TabCove
+    await chrome.tabs.create({ url: tabOutUrl });
+  }
+});

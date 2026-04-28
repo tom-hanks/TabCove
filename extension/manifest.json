@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Tab Out",
+  "name": "TabCove",
   "version": "1.0.0",
-  "description": "Keep tabs on your tabs. New tab page that groups your open tabs by domain and lets you close them with style.",
-  "permissions": ["tabs", "activeTab", "storage"],
-  "chrome_url_overrides": { "newtab": "index.html" },
+  "description": "标签页管理专家 - 分组、休眠、收藏，让你的标签页井然有序。",
+  "permissions": ["tabs", "activeTab", "storage", "power", "tabGroups"],
+  "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": {
-    "default_title": "Tab Out",
+    "default_title": "TabCove",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png"

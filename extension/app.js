@@ -1,72 +1,573 @@
 /* ================================================================
-   Tab Out — Dashboard App (Pure Extension Edition)
-
-   This file is the brain of the dashboard. Now that the dashboard
-   IS the extension page (not inside an iframe), it can call
-   chrome.tabs and chrome.storage directly — no postMessage bridge needed.
-
-   What this file does:
-   1. Reads open browser tabs directly via chrome.tabs.query()
-   2. Groups tabs by domain with a landing pages category
-   3. Renders domain cards, banners, and stats
-   4. Handles all user actions (close tabs, save for later, focus tab)
-   5. Stores "Saved for Later" tabs in chrome.storage.local (no server)
+   TabCove — Sidebar Layout App
    ================================================================ */
 
 'use strict';
 
-
-/* ----------------------------------------------------------------
-   CHROME TABS — Direct API Access
-
-   Since this page IS the extension's new tab page, it has full
-   access to chrome.tabs and chrome.storage. No middleman needed.
-   ---------------------------------------------------------------- */
-
-// All open tabs — populated by fetchOpenTabs()
+/* ================================================================
+   STATE
+   ================================================================ */
 let openTabs = [];
+let savedTabs = [];
+let suspendedTabs = [];
+let recentlyClosed = [];
+let currentView = 'all'; // 'all' | 'saved' | 'suspended' | 'history'
+let searchQuery = '';
 
-/**
- * fetchOpenTabs()
- *
- * Reads all currently open browser tabs directly from Chrome.
- * Sets the extensionId flag so we can identify Tab Out's own pages.
- */
+/* ================================================================
+   INIT
+   ================================================================ */
+document.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+  loadSavedTabs();
+  loadSuspendedTabs();
+  loadRecentlyClosed();
+  setupTheme();
+  setupNavigation();
+  setupSearch();
+  setupRefresh();
+  setupVisibilityRefresh();
+  await refresh();
+}
+
+function setupVisibilityRefresh() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refresh();
+    }
+  });
+}
+
+async function refresh() {
+  await fetchOpenTabs();
+  render();
+  updateCounts();
+  renderNavDomains();
+}
+
+/* ================================================================
+   CHROME API
+   ================================================================ */
 async function fetchOpenTabs() {
   try {
     const extensionId = chrome.runtime.id;
-    // The new URL for this page is now index.html (not newtab.html)
     const newtabUrl = `chrome-extension://${extensionId}/index.html`;
-
     const tabs = await chrome.tabs.query({});
-    openTabs = tabs.map(t => ({
-      id:           t.id,
-      url:          t.url,
-      title:        t.title,
-      windowId:     t.windowId,
-      active:       t.active,
-      lastAccessed: t.lastAccessed || Date.now(), // Chrome 88+ 支持
-      // Flag Tab Out's own pages so we can detect duplicate new tabs
-      isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
-    }));
+    openTabs = tabs
+      .filter(t => !t.url.startsWith('chrome-extension://') && t.url !== 'chrome://newtab/')
+      .map(t => ({
+        id: t.id,
+        url: t.url,
+        title: t.title || '无标题',
+        hostname: getHostname(t.url),
+        lastAccessed: t.lastAccessed || Date.now(),
+        active: t.active,
+        discarded: t.discarded || false,
+        favIconUrl: t.favIconUrl,
+      }));
   } catch {
-    // chrome.tabs API unavailable (shouldn't happen in an extension page)
     openTabs = [];
   }
 }
 
-/**
- * closeTabsByUrls(urls)
- *
- * Closes all open tabs whose hostname matches any of the given URLs.
- * After closing, re-fetches the tab list to keep our state accurate.
- *
- * Special case: file:// URLs are matched exactly (they have no hostname).
- */
+function getHostname(url) {
+  try {
+    if (url.startsWith('file://')) return '本地文件';
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+async function closeTab(tabId) {
+  try {
+    await chrome.tabs.remove(tabId);
+    await refresh();
+  } catch (e) {
+    console.error('Failed to close tab:', e);
+  }
+}
+
+async function focusTab(tabId) {
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    await chrome.windows.update(tabId.windowId || (await chrome.tabs.get(tabId)).windowId, { focused: true });
+  } catch (e) {
+    console.error('Failed to focus tab:', e);
+  }
+}
+
+async function discardTab(tabId) {
+  try {
+    const tab = openTabs.find(t => t.id === tabId);
+    if (tab) {
+      // 保存到休眠列表
+      suspendedTabs.unshift({
+        url: tab.url,
+        title: tab.title,
+        hostname: tab.hostname || getHostname(tab.url),
+        favicon: tab.favIconUrl,
+        suspendedAt: Date.now(),
+      });
+      saveSuspendedTabs();
+      // 关闭标签
+      await chrome.tabs.remove(tabId);
+      showToast('已休眠');
+      await refresh();
+    }
+  } catch (e) {
+    console.error('Failed to discard tab:', e);
+    showToast('休眠失败');
+  }
+}
+
+async function wakeTab(url) {
+  try {
+    await chrome.tabs.create({ url, active: true });
+    // 从休眠列表移除
+    suspendedTabs = suspendedTabs.filter(t => t.url !== url);
+    saveSuspendedTabs();
+    showToast('已唤醒');
+    render();
+    updateCounts();
+  } catch (e) {
+    // 即使唤醒失败（如URL无效），也从休眠列表移除
+    suspendedTabs = suspendedTabs.filter(t => t.url !== url);
+    saveSuspendedTabs();
+    render();
+    updateCounts();
+    showToast('唤醒失败');
+  }
+}
+
+async function openUrl(url) {
+  try {
+    await chrome.tabs.create({ url, active: true });
+  } catch (e) {
+    console.error('Failed to open tab:', e);
+  }
+}
+
+/* ================================================================
+   STORAGE
+   ================================================================ */
+function loadSavedTabs() {
+  chrome.storage.local.get(['deferred'], (res) => {
+    savedTabs = res.deferred || [];
+  });
+}
+
+function loadSuspendedTabs() {
+  chrome.storage.local.get(['suspendedTabs'], (res) => {
+    const tabs = res.suspendedTabs || [];
+    // 清理无效数据并补充缺失字段
+    suspendedTabs = tabs
+      .filter(tab => tab.url) // 只保留有 URL 的条目
+      .map(tab => ({
+        url: tab.url,
+        title: tab.title || '无标题',
+        hostname: tab.hostname || getHostname(tab.url),
+        favicon: tab.favicon || null,
+        suspendedAt: typeof tab.suspendedAt === 'number' ? tab.suspendedAt :
+                    typeof tab.suspendedAt === 'string' ? new Date(tab.suspendedAt).getTime() : Date.now(),
+      }));
+    saveSuspendedTabs(); // 保存清理后的数据
+  });
+}
+
+function saveSuspendedTabs() {
+  chrome.storage.local.set({ suspendedTabs });
+}
+
+function loadRecentlyClosed() {
+  chrome.storage.local.get(['recentlyClosed'], (res) => {
+    recentlyClosed = res.recentlyClosed || [];
+  });
+}
+
+function saveSavedTabs() {
+  chrome.storage.local.set({ deferred: savedTabs });
+}
+
+function saveRecentlyClosed() {
+  chrome.storage.local.set({ recentlyClosed });
+}
+
+/* ================================================================
+   THEME
+   ================================================================ */
+function setupTheme() {
+  const html = document.documentElement;
+  const savedTheme = localStorage.getItem('tabout-theme') || 'dark';
+  const savedAccent = localStorage.getItem('tabout-accent') || 'blue';
+
+  function setTheme(theme) {
+    html.dataset.theme = theme;
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === theme);
+    });
+    localStorage.setItem('tabout-theme', theme);
+  }
+
+  function setAccent(accent) {
+    html.dataset.accent = accent;
+    document.querySelectorAll('.accent-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.accent === accent);
+    });
+    localStorage.setItem('tabout-accent', accent);
+  }
+
+  setTheme(savedTheme);
+  setAccent(savedAccent);
+
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => setTheme(btn.dataset.theme));
+  });
+
+  document.querySelectorAll('.accent-btn').forEach(btn => {
+    btn.addEventListener('click', () => setAccent(btn.dataset.accent));
+  });
+}
+
+/* ================================================================
+   NAVIGATION
+   ================================================================ */
+function setupNavigation() {
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+    item.addEventListener('click', () => {
+      currentView = item.dataset.view;
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      render();
+    });
+  });
+}
+
+/* ================================================================
+   SEARCH
+   ================================================================ */
+function setupSearch() {
+  const input = document.getElementById('searchInput');
+  input.addEventListener('input', (e) => {
+    searchQuery = e.target.value.toLowerCase();
+    render();
+  });
+}
+
+/* ================================================================
+   REFRESH
+   ================================================================ */
+function setupRefresh() {
+  document.getElementById('refreshBtn').addEventListener('click', refresh);
+}
+
+/* ================================================================
+   RENDER
+   ================================================================ */
+function render() {
+  const tabList = document.getElementById('tabList');
+  const emptyState = document.getElementById('emptyState');
+  const viewTitle = document.getElementById('viewTitle');
+  const viewMeta = document.getElementById('viewMeta');
+
+  let html = '';
+
+  if (currentView === 'all') {
+    viewTitle.textContent = '全部标签';
+    html = renderAllTabs();
+  } else if (currentView === 'saved') {
+    viewTitle.textContent = '稍后阅读';
+    html = renderSavedTabs();
+  } else if (currentView === 'suspended') {
+    viewTitle.textContent = '已休眠';
+    html = renderSuspendedTabs();
+  } else if (currentView === 'history') {
+    viewTitle.textContent = '最近关闭';
+    html = renderHistory();
+  }
+
+  tabList.innerHTML = html;
+  emptyState.style.display = html ? 'none' : 'block';
+
+  setupTabActions();
+}
+
+function renderAllTabs() {
+  const domains = groupTabsByDomain(openTabs);
+  let html = '';
+
+  for (const [domain, tabs] of Object.entries(domains)) {
+    const filteredTabs = tabs.filter(t =>
+      t.title.toLowerCase().includes(searchQuery) ||
+      t.url.toLowerCase().includes(searchQuery)
+    );
+
+    if (filteredTabs.length === 0) continue;
+
+    const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+
+    html += `
+      <div class="domain">
+        <div class="domain-header">
+          <img class="domain-favicon" src="${favicon}" alt="" onerror="this.style.display='none'">
+          <span class="domain-name">${domain}</span>
+          <span class="domain-count">${filteredTabs.length} 个标签</span>
+          <div class="domain-actions">
+            <button class="domain-btn discard-all" data-action="discard-domain" data-domain="${domain}">整休</button>
+            <button class="domain-btn create" data-action="create-group" data-domain="${domain}">建组</button>
+            <button class="domain-btn close-all" data-action="close-domain" data-domain="${domain}">全关</button>
+          </div>
+        </div>
+        ${filteredTabs.map(tab => renderTabRow(tab)).join('')}
+      </div>
+    `;
+  }
+
+  return html;
+}
+
+function renderTabRow(tab) {
+  const timeAgo = getTimeAgo(tab.lastAccessed);
+  const timeClass = getTimeClass(tab.lastAccessed);
+  const favicon = tab.favIconUrl && !tab.favIconUrl.startsWith('chrome://')
+    ? tab.favIconUrl
+    : getFaviconUrl(tab.hostname);
+
+  return `
+    <div class="tab-row" data-tab-id="${tab.id}">
+      <img class="tab-favicon" src="${favicon}" alt="" onerror="this.style.display='none'">
+      <span class="tab-title" title="${escapeHtml(tab.url)}">${escapeHtml(tab.title)}</span>
+      <span class="tab-time ${timeClass}">${timeAgo}</span>
+      <div class="tab-actions">
+        <button class="tab-action discard" data-action="discard-tab" data-tab-id="${tab.id}">休眠</button>
+        <button class="tab-action group" data-action="group-tab" data-tab-id="${tab.id}">分组</button>
+        <button class="tab-action save" data-action="save-tab" data-tab-id="${tab.id}">收藏</button>
+        <button class="tab-action close" data-action="close-tab" data-tab-id="${tab.id}">关闭</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderSavedTabs() {
+  if (savedTabs.length === 0) return '';
+
+  return `
+    <div class="saved-list">
+      ${savedTabs.map(tab => `
+        <div class="saved-item" data-saved-url="${escapeHtml(tab.url)}">
+          <img class="saved-favicon" src="${getFaviconUrl(tab.hostname)}" alt="" onerror="this.style.display='none'">
+          <div class="saved-info">
+            <div class="saved-title" title="${escapeHtml(tab.url)}">${escapeHtml(tab.title)}</div>
+            <div class="saved-meta">${tab.hostname} · 保存于 ${getTimeAgo(tab.savedAt)}</div>
+          </div>
+          <div class="saved-actions">
+            <button class="saved-action open" data-action="open-saved" data-url="${escapeHtml(tab.url)}">打开</button>
+            <button class="saved-action delete" data-action="delete-saved" data-url="${escapeHtml(tab.url)}">删除</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderHistory() {
+  if (recentlyClosed.length === 0) return '';
+
+  return `
+    <div class="history-list">
+      ${recentlyClosed.map(item => `
+        <div class="history-item" data-history-url="${escapeHtml(item.url)}">
+          <img class="history-favicon" src="${getFaviconUrl(item.hostname)}" alt="" onerror="this.style.display='none'">
+          <div class="history-info">
+            <div class="history-title" title="${escapeHtml(item.url)}">${escapeHtml(item.title)}</div>
+          </div>
+          <span class="history-time">${getTimeAgo(item.closedAt)}</span>
+          <button class="history-action" data-action="restore" data-url="${escapeHtml(item.url)}">恢复</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderSuspendedTabs() {
+  if (suspendedTabs.length === 0) return '';
+
+  // 清理无效数据：没有URL或时间戳不存在的条目
+  const validTabs = suspendedTabs.filter(tab => tab.url && tab.suspendedAt);
+
+  return `
+    <div class="suspended-list">
+      ${validTabs.map(tab => {
+        const hostname = tab.hostname || getHostname(tab.url);
+        const suspendedTime = typeof tab.suspendedAt === 'number' ? tab.suspendedAt : Date.now();
+        return `
+        <div class="suspended-item" data-suspended-url="${escapeHtml(tab.url)}">
+          <span class="suspended-icon">💤</span>
+          <img class="suspended-favicon" src="${getFaviconUrl(hostname)}" alt="" onerror="this.style.display='none'">
+          <div class="suspended-info">
+            <div class="suspended-title" title="${escapeHtml(tab.url)}">${escapeHtml(tab.title || '无标题')}</div>
+            <div class="suspended-meta">${hostname} · 休眠于 ${getTimeAgo(suspendedTime)}</div>
+          </div>
+          <div class="suspended-actions">
+            <button class="suspended-action wake" data-action="wake-tab" data-url="${escapeHtml(tab.url)}">唤醒</button>
+            <button class="suspended-action delete" data-action="delete-suspended" data-url="${escapeHtml(tab.url)}">删除</button>
+          </div>
+        </div>
+      `}).join('')}
+    </div>
+  `;
+}
+
+/* ================================================================
+   ACTIONS
+   ================================================================ */
+function setupTabActions() {
+  document.querySelectorAll('[data-action]').forEach(el => {
+    el.addEventListener('click', handleAction);
+  });
+
+  document.querySelectorAll('.tab-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action]')) return;
+      const tabId = parseInt(row.dataset.tabId);
+      focusTab(tabId);
+    });
+  });
+}
+
+async function handleAction(e) {
+  const action = e.currentTarget.dataset.action;
+  const tabId = e.currentTarget.dataset.tabId ? parseInt(e.currentTarget.dataset.tabId) : null;
+  const url = e.currentTarget.dataset.url;
+  const domain = e.currentTarget.dataset.domain;
+
+  switch (action) {
+    case 'close-tab':
+      if (tabId) {
+        const tab = openTabs.find(t => t.id === tabId);
+        if (tab) {
+          addToRecentlyClosed(tab);
+          await closeTab(tabId);
+          showToast('已关闭');
+        }
+      }
+      break;
+
+    case 'discard-tab':
+      if (tabId) {
+        await discardTab(tabId);
+      }
+      break;
+
+    case 'save-tab':
+      if (tabId) {
+        const tab = openTabs.find(t => t.id === tabId);
+        if (tab) {
+          savedTabs.unshift({
+            url: tab.url,
+            title: tab.title,
+            hostname: tab.hostname,
+            favicon: tab.favIconUrl,
+            savedAt: Date.now(),
+          });
+          saveSavedTabs();
+          showToast('已保存');
+          updateCounts();
+        }
+      }
+      break;
+
+    case 'open-saved':
+      if (url) {
+        await openUrl(url);
+      }
+      break;
+
+    case 'delete-saved':
+      if (url) {
+        savedTabs = savedTabs.filter(t => t.url !== url);
+        saveSavedTabs();
+        render();
+        updateCounts();
+        showToast('已删除');
+      }
+      break;
+
+    case 'wake-tab':
+      if (url) {
+        await wakeTab(url);
+        showToast('已唤醒');
+      }
+      break;
+
+    case 'delete-suspended':
+      if (url) {
+        suspendedTabs = suspendedTabs.filter(t => t.url !== url);
+        saveSuspendedTabs();
+        render();
+        updateCounts();
+        showToast('已删除');
+      }
+      break;
+
+    case 'restore':
+      if (url) {
+        await openUrl(url);
+      }
+      break;
+
+    case 'close-domain':
+      if (domain) {
+        const tabs = openTabs.filter(t => t.hostname === domain);
+        for (const tab of tabs) {
+          addToRecentlyClosed(tab);
+        }
+        await closeTabsByUrls(tabs.map(t => t.url));
+        showToast(`已关闭 ${tabs.length} 个标签`);
+      }
+      break;
+
+    case 'discard-domain':
+      if (domain) {
+        try {
+          const tabs = openTabs.filter(t => t.hostname === domain && !t.discarded);
+          if (tabs.length > 0) {
+            for (const tab of tabs) {
+              await chrome.tabs.discard(tab.id);
+            }
+            showToast(`已休眠 ${tabs.length} 个标签`);
+            await refresh();
+          } else {
+            showToast('无可休眠标签');
+          }
+        } catch (e) {
+          console.error('Failed to discard domain tabs:', e);
+          showToast('休眠失败');
+        }
+      }
+      break;
+
+    case 'create-group':
+      if (domain) {
+        try {
+          const tabs = openTabs.filter(t => t.hostname === domain);
+          if (tabs.length > 0) {
+            const groupId = await chrome.tabs.group({ tabIds: tabs.map(t => t.id) });
+            showToast(`已创建分组`);
+          }
+        } catch (e) {
+          console.error('Failed to create group:', e);
+          showToast('分组失败');
+        }
+      }
+      break;
+  }
+}
+
 async function closeTabsByUrls(urls) {
   if (!urls || urls.length === 0) return;
 
-  // Separate file:// URLs (exact match) from regular URLs (hostname match)
   const targetHostnames = [];
   const exactUrls = new Set();
 
@@ -75,7 +576,7 @@ async function closeTabsByUrls(urls) {
       exactUrls.add(u);
     } else {
       try { targetHostnames.push(new URL(u).hostname); }
-      catch { /* skip unparseable */ }
+      catch { /* skip */ }
     }
   }
 
@@ -92,1870 +593,140 @@ async function closeTabsByUrls(urls) {
     .map(tab => tab.id);
 
   if (toClose.length > 0) await chrome.tabs.remove(toClose);
-  await fetchOpenTabs();
+  await refresh();
 }
 
-/**
- * closeTabsExact(urls)
- *
- * Closes tabs by exact URL match (not hostname). Used for landing pages
- * so closing "Gmail inbox" doesn't also close individual email threads.
- */
-async function closeTabsExact(urls) {
-  if (!urls || urls.length === 0) return;
-  const urlSet = new Set(urls);
-  const allTabs = await chrome.tabs.query({});
-  const toClose = allTabs.filter(t => urlSet.has(t.url)).map(t => t.id);
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
-  await fetchOpenTabs();
-}
-
-/**
- * focusTab(url)
- *
- * Switches Chrome to the tab with the given URL (exact match first,
- * then hostname fallback). Also brings the window to the front.
- */
-async function focusTab(url) {
-  if (!url) return;
-  const allTabs = await chrome.tabs.query({});
-  const currentWindow = await chrome.windows.getCurrent();
-
-  // Try exact URL match first
-  let matches = allTabs.filter(t => t.url === url);
-
-  // Fall back to hostname match
-  if (matches.length === 0) {
-    try {
-      const targetHost = new URL(url).hostname;
-      matches = allTabs.filter(t => {
-        try { return new URL(t.url).hostname === targetHost; }
-        catch { return false; }
-      });
-    } catch {}
+/* ================================================================
+   RECENTLY CLOSED
+   ================================================================ */
+function addToRecentlyClosed(tab) {
+  const existing = recentlyClosed.findIndex(t => t.url === tab.url);
+  if (existing !== -1) {
+    recentlyClosed.splice(existing, 1);
   }
-
-  if (matches.length === 0) return;
-
-  // Prefer a match in a different window so it actually switches windows
-  const match = matches.find(t => t.windowId !== currentWindow.id) || matches[0];
-  await chrome.tabs.update(match.id, { active: true });
-  await chrome.windows.update(match.windowId, { focused: true });
-}
-
-/**
- * closeDuplicateTabs(urls, keepOne)
- *
- * Closes duplicate tabs for the given list of URLs.
- * keepOne=true → keep one copy of each, close the rest.
- * keepOne=false → close all copies.
- */
-async function closeDuplicateTabs(urls, keepOne = true) {
-  const allTabs = await chrome.tabs.query({});
-  const toClose = [];
-
-  for (const url of urls) {
-    const matching = allTabs.filter(t => t.url === url);
-    if (keepOne) {
-      const keep = matching.find(t => t.active) || matching[0];
-      for (const tab of matching) {
-        if (tab.id !== keep.id) toClose.push(tab.id);
-      }
-    } else {
-      for (const tab of matching) toClose.push(tab.id);
-    }
-  }
-
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
-  await fetchOpenTabs();
-}
-
-/**
- * closeTabOutDupes()
- *
- * Closes all duplicate Tab Out new-tab pages except the current one.
- */
-async function closeTabOutDupes() {
-  const extensionId = chrome.runtime.id;
-  const newtabUrl = `chrome-extension://${extensionId}/index.html`;
-
-  const allTabs = await chrome.tabs.query({});
-  const currentWindow = await chrome.windows.getCurrent();
-  const tabOutTabs = allTabs.filter(t =>
-    t.url === newtabUrl || t.url === 'chrome://newtab/'
-  );
-
-  if (tabOutTabs.length <= 1) return;
-
-  // Keep the active Tab Out tab in the CURRENT window — that's the one the
-  // user is looking at right now. Falls back to any active one, then the first.
-  const keep =
-    tabOutTabs.find(t => t.active && t.windowId === currentWindow.id) ||
-    tabOutTabs.find(t => t.active) ||
-    tabOutTabs[0];
-  const toClose = tabOutTabs.filter(t => t.id !== keep.id).map(t => t.id);
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
-  await fetchOpenTabs();
-}
-
-/**
- * createTabGroup(tabIds, groupTitle)
- *
- * Creates a native Chrome tab group from the given tab IDs.
- */
-async function createTabGroup(tabIds, groupTitle) {
-  if (!tabIds || tabIds.length === 0) return;
-  try {
-    const groupId = await chrome.tabs.group({ tabIds });
-    await chrome.tabGroups.update(groupId, { title: groupTitle, collapsed: false });
-    showToast(`已创建「${groupTitle}」分组`);
-  } catch (err) {
-    console.error('[tab-out] Failed to create tab group:', err);
-    showToast('创建分组失败');
-  }
-}
-
-
-/* ----------------------------------------------------------------
-   SAVED FOR LATER — chrome.storage.local
-
-   Replaces the old server-side SQLite + REST API with Chrome's
-   built-in key-value storage. Data persists across browser sessions
-   and doesn't require a running server.
-
-   Data shape stored under the "deferred" key:
-   [
-     {
-       id: "1712345678901",          // timestamp-based unique ID
-       url: "https://example.com",
-       title: "Example Page",
-       savedAt: "2026-04-04T10:00:00.000Z",  // ISO date string
-       completed: false,             // true = checked off (archived)
-       dismissed: false              // true = dismissed without reading
-     },
-     ...
-   ]
-   ---------------------------------------------------------------- */
-
-/**
- * saveTabForLater(tab)
- *
- * Saves a single tab to the "Saved for Later" list in chrome.storage.local.
- * @param {{ url: string, title: string }} tab
- */
-async function saveTabForLater(tab) {
-  const { deferred = [] } = await chrome.storage.local.get('deferred');
-  deferred.push({
-    id:        Date.now().toString(),
-    url:       tab.url,
-    title:     tab.title,
-    savedAt:   new Date().toISOString(),
-    completed: false,
-    dismissed: false,
-  });
-  await chrome.storage.local.set({ deferred });
-}
-
-/**
- * getSavedTabs()
- *
- * Returns all saved tabs from chrome.storage.local.
- * Filters out dismissed items (those are gone for good).
- * Splits into active (not completed) and archived (completed).
- */
-async function getSavedTabs() {
-  const { deferred = [] } = await chrome.storage.local.get('deferred');
-  const visible = deferred.filter(t => !t.dismissed);
-  return {
-    active:   visible.filter(t => !t.completed),
-    archived: visible.filter(t => t.completed),
-  };
-}
-
-/**
- * checkOffSavedTab(id)
- *
- * Marks a saved tab as completed (checked off). It moves to the archive.
- */
-async function checkOffSavedTab(id) {
-  const { deferred = [] } = await chrome.storage.local.get('deferred');
-  const tab = deferred.find(t => t.id === id);
-  if (tab) {
-    tab.completed = true;
-    tab.completedAt = new Date().toISOString();
-    await chrome.storage.local.set({ deferred });
-  }
-}
-
-/**
- * dismissSavedTab(id)
- *
- * Marks a saved tab as dismissed (removed from all lists).
- */
-async function dismissSavedTab(id) {
-  const { deferred = [] } = await chrome.storage.local.get('deferred');
-  const tab = deferred.find(t => t.id === id);
-  if (tab) {
-    tab.dismissed = true;
-    await chrome.storage.local.set({ deferred });
-  }
-}
-
-
-/* ----------------------------------------------------------------
-   历史记录 — chrome.storage.local
-   ---------------------------------------------------------------- */
-
-const MAX_HISTORY_COUNT = 500;
-const MAX_HISTORY_DAYS = 2; // 48小时内
-
-/**
- * getRecentlyClosed()
- *
- * 获取最近关闭的标签历史
- */
-async function getRecentlyClosed() {
-  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
-  const cutoff = Date.now() - (MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000);
-  return recentlyClosed
-    .filter(item => new Date(item.closedAt).getTime() > cutoff)
-    .slice(0, MAX_HISTORY_COUNT);
-}
-
-/**
- * addToRecentlyClosed(tab)
- *
- * 添加关闭的标签到历史记录
- *
- * 注意: 这里存在一个已知限制 - 如果两个标签同时关闭，
- * 两个调用会并发读取相同状态，导致后者覆盖前者。
- * Chrome storage.local 不支持事务性操作，这是实际限制。
- * 由于这种情况极少发生，且影响极小，暂以此简单实现。
- */
-async function addToRecentlyClosed(tab) {
-  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
-  // 使用 Date.now() + 随机数生成唯一 ID，解决 URL 相同时无法区分的问题
-  const id = Date.now().toString(36) + Math.random().toString(36).substring(2, 11);
   recentlyClosed.unshift({
-    id,
     url: tab.url,
     title: tab.title,
-    closedAt: new Date().toISOString(),
+    hostname: tab.hostname,
+    favicon: tab.favIconUrl,
+    closedAt: Date.now(),
   });
-  // 限制数量
-  if (recentlyClosed.length > MAX_HISTORY_COUNT) {
-    recentlyClosed.pop();
+  if (recentlyClosed.length > 50) {
+    recentlyClosed = recentlyClosed.slice(0, 50);
   }
-  await chrome.storage.local.set({ recentlyClosed: recentlyClosed });
+  saveRecentlyClosed();
 }
 
-/**
- * removeFromRecentlyClosed(id)
- *
- * 从历史记录中移除（恢复时调用）
- */
-async function removeFromRecentlyClosed(id) {
-  const { recentlyClosed = [] } = await chrome.storage.local.get('recentlyClosed');
-  const filtered = recentlyClosed.filter(item => item.id !== id);
-  await chrome.storage.local.set({ recentlyClosed: filtered });
+/* ================================================================
+   UTILITIES
+   ================================================================ */
+function groupTabsByDomain(tabs) {
+  const groups = {};
+  for (const tab of tabs) {
+    const domain = tab.hostname;
+    if (!groups[domain]) groups[domain] = [];
+    groups[domain].push(tab);
+  }
+  return groups;
 }
 
-/**
- * clearRecentlyClosed()
- *
- * 清空所有历史记录
- */
-async function clearRecentlyClosed() {
-  await chrome.storage.local.set({ recentlyClosed: [] });
+function getFaviconUrl(hostname) {
+  return `https://www.google.com/s2/favicons?domain=${hostname}&sz=32`;
 }
 
+function getTimeAgo(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return '刚刚';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
+  return `${Math.floor(seconds / 604800)}w`;
+}
 
-/* ----------------------------------------------------------------
-   UI HELPERS
-   ---------------------------------------------------------------- */
+function getTimeClass(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 300) return 'recent';
+  if (seconds < 3600) return 'medium';
+  if (seconds < 86400) return 'neutral';
+  return 'old';
+}
 
-/**
- * playCloseSound()
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
+function updateCounts() {
+  document.getElementById('totalCount').textContent = openTabs.length;
+  document.getElementById('savedCount').textContent = savedTabs.length;
+  document.getElementById('suspendedCount').textContent = suspendedTabs.length;
+  document.getElementById('historyCount').textContent = recentlyClosed.length;
 
- *
- * Plays a clean "swoosh" sound when tabs are closed.
- * Built entirely with the Web Audio API — no sound files needed.
- * A filtered noise sweep that descends in pitch, like air moving.
- */
-function playCloseSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const t = ctx.currentTime;
-
-    // Swoosh: shaped white noise through a sweeping bandpass filter
-    const duration = 0.25;
-    const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Generate noise with a natural envelope (quick attack, smooth decay)
-    for (let i = 0; i < data.length; i++) {
-      const pos = i / data.length;
-      // Envelope: ramps up fast in first 10%, then fades out smoothly
-      const env = pos < 0.1 ? pos / 0.1 : Math.pow(1 - (pos - 0.1) / 0.9, 1.5);
-      data[i] = (Math.random() * 2 - 1) * env;
-    }
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-
-    // Bandpass filter sweeps from high to low — creates the "swoosh" character
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.Q.value = 2.0;
-    filter.frequency.setValueAtTime(4000, t);
-    filter.frequency.exponentialRampToValueAtTime(400, t + duration);
-
-    // Volume
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-
-    source.connect(filter).connect(gain).connect(ctx.destination);
-    source.start(t);
-
-    setTimeout(() => ctx.close(), 500);
-  } catch {
-    // Audio not supported — fail silently
+  const viewMeta = document.getElementById('viewMeta');
+  if (currentView === 'all') {
+    viewMeta.textContent = `${openTabs.length} 个标签`;
+  } else if (currentView === 'saved') {
+    viewMeta.textContent = `${savedTabs.length} 个保存`;
+  } else if (currentView === 'suspended') {
+    viewMeta.textContent = `${suspendedTabs.length} 个休眠`;
+  } else if (currentView === 'history') {
+    viewMeta.textContent = `${recentlyClosed.length} 条记录`;
   }
 }
 
-/**
- * shootConfetti(x, y)
- *
- * Shoots a burst of colorful confetti particles from the given screen
- * coordinates (typically the center of a card being closed).
- * Pure CSS + JS, no libraries.
- */
-function shootConfetti(x, y) {
-  const colors = [
-    '#c8713a', // amber
-    '#e8a070', // amber light
-    '#5a7a62', // sage
-    '#8aaa92', // sage light
-    '#5a6b7a', // slate
-    '#8a9baa', // slate light
-    '#d4b896', // warm paper
-    '#b35a5a', // rose
-  ];
+function renderNavDomains() {
+  const navDomains = document.getElementById('navDomains');
+  if (!navDomains) return;
 
-  const particleCount = 17;
+  const domains = groupTabsByDomain(openTabs);
+  const domainEntries = Object.entries(domains)
+    .filter(([domain]) => !domain.startsWith('__'))
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 10);
 
-  for (let i = 0; i < particleCount; i++) {
-    const el = document.createElement('div');
+  if (domainEntries.length === 0) {
+    navDomains.innerHTML = '<div class="nav-label" style="padding: 8px 12px; font-size: 11px; color: var(--text-muted);">暂无域名</div>';
+    return;
+  }
 
-    const isCircle = Math.random() > 0.5;
-    const size = 5 + Math.random() * 6; // 5–11px
-    const color = colors[Math.floor(Math.random() * colors.length)];
-
-    el.style.cssText = `
-      position: fixed;
-      left: ${x}px;
-      top: ${y}px;
-      width: ${size}px;
-      height: ${size}px;
-      background: ${color};
-      border-radius: ${isCircle ? '50%' : '2px'};
-      pointer-events: none;
-      z-index: 9999;
-      transform: translate(-50%, -50%);
-      opacity: 1;
+  navDomains.innerHTML = domainEntries.map(([domain, tabs]) => {
+    const favicon = getFaviconUrl(domain);
+    return `
+      <div class="nav-domain-item" data-domain="${domain}">
+        <img src="${favicon}" alt="" onerror="this.style.display='none'">
+        <span class="domain-text">${domain}</span>
+        <span class="nav-count">${tabs.length}</span>
+      </div>
     `;
-    document.body.appendChild(el);
+  }).join('');
 
-    // Physics: random angle and speed for the outward burst
-    const angle   = Math.random() * Math.PI * 2;
-    const speed   = 60 + Math.random() * 120;
-    const vx      = Math.cos(angle) * speed;
-    const vy      = Math.sin(angle) * speed - 80; // bias upward
-    const gravity = 200;
+  navDomains.querySelectorAll('.nav-domain-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const domain = item.dataset.domain;
+      document.querySelectorAll('.nav-domain-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      filterByDomain(domain);
+    });
+  });
+}
 
-    const startTime = performance.now();
-    const duration  = 700 + Math.random() * 200; // 700–900ms
-
-    function frame(now) {
-      const elapsed  = (now - startTime) / 1000;
-      const progress = elapsed / (duration / 1000);
-
-      if (progress >= 1) { el.remove(); return; }
-
-      const px = vx * elapsed;
-      const py = vy * elapsed + 0.5 * gravity * elapsed * elapsed;
-      const opacity = progress < 0.5 ? 1 : 1 - (progress - 0.5) * 2;
-      const rotate  = elapsed * 200 * (isCircle ? 0 : 1);
-
-      el.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px)) rotate(${rotate}deg)`;
-      el.style.opacity = opacity;
-
-      requestAnimationFrame(frame);
-    }
-
-    requestAnimationFrame(frame);
+function filterByDomain(domain) {
+  if (currentView !== 'all') {
+    currentView = 'all';
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelector('.nav-item[data-view="all"]')?.classList.add('active');
   }
+  searchQuery = domain;
+  render();
+  searchQuery = '';
 }
 
-/**
- * animateCardOut(card)
- *
- * Smoothly removes a mission card: fade + scale down, then confetti.
- * After the animation, checks if the grid is now empty.
- */
-function animateCardOut(card) {
-  if (!card) return;
-
-  const rect = card.getBoundingClientRect();
-  shootConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
-
-  card.classList.add('closing');
-  setTimeout(() => {
-    card.remove();
-    checkAndShowEmptyState();
-  }, 300);
-}
-
-/**
- * showToast(message)
- *
- * Brief pop-up notification at the bottom of the screen.
- */
 function showToast(message) {
   const toast = document.getElementById('toast');
-  document.getElementById('toastText').textContent = message;
+  const toastText = document.getElementById('toastText');
+  toastText.textContent = message;
   toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 2500);
+  setTimeout(() => toast.classList.remove('visible'), 2000);
 }
-
-/**
- * checkAndShowEmptyState()
- *
- * Shows a cheerful "Inbox zero" message when all domain cards are gone.
- */
-function checkAndShowEmptyState() {
-  const missionsEl = document.getElementById('openTabsMissions');
-  if (!missionsEl) return;
-
-  const remaining = missionsEl.querySelectorAll('.mission-card:not(.closing)').length;
-  if (remaining > 0) return;
-
-  missionsEl.innerHTML = `
-    <div class="missions-empty-state">
-      <div class="empty-checkmark">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-        </svg>
-      </div>
-      <div class="empty-title">标签全部清空。</div>
-      <div class="empty-subtitle">你自由了。</div>
-    </div>
-  `;
-
-  const countEl = document.getElementById('openTabsSectionCount');
-  if (countEl) countEl.textContent = '0 个域名';
-}
-
-/**
- * filterDomainGroups()
- *
- * 根据搜索词和时间/域名筛选条件过滤分组
- */
-function filterDomainGroups() {
-  const query = searchQuery.toLowerCase().trim();
-
-  filteredDomainGroups = domainGroups.map(group => {
-    const filteredTabs = group.tabs.filter(tab => {
-      // 搜索匹配
-      if (query) {
-        const matchTitle = (tab.title || '').toLowerCase().includes(query);
-        const matchUrl = (tab.url || '').toLowerCase().includes(query);
-        if (!matchTitle && !matchUrl) return false;
-      }
-
-      // 时间筛选
-      if (filterTime !== 'all' && tab.lastAccessed) {
-        const now = Date.now();
-        const diffHours = (now - tab.lastAccessed) / 3600000;
-        const diffDays = Math.floor(diffHours / 24);
-
-        if (filterTime === 'recent' && diffHours >= 0.083) return false; // 排除5分钟前的 → 保留5分钟内的
-        if (filterTime === 'today' && diffHours >= 24) return false;
-        if (filterTime === 'yesterday' && diffDays !== 1) return false;
-        if (filterTime === 'old' && diffDays < 3) return false;
-      }
-
-      // 域名筛选
-      if (filterDomain !== 'all') {
-        try {
-          const tabDomain = new URL(tab.url).hostname;
-          if (tabDomain !== filterDomain) return false;
-        } catch { return false; }
-      }
-
-      return true;
-    });
-
-    return { ...group, tabs: filteredTabs };
-  }).filter(group => group.tabs.length > 0);
-
-  renderFilteredDomainGroups();
-}
-
-/**
- * renderFilteredDomainGroups()
- *
- * 渲染筛选后的分组
- */
-function renderFilteredDomainGroups() {
-  const missionsEl = document.getElementById('openTabsMissions');
-
-  if (filteredDomainGroups.length === 0 && (searchQuery || filterTime !== 'all' || filterDomain !== 'all')) {
-    missionsEl.innerHTML = `
-      <div class="no-results">
-        <h3>没有找到匹配的标签</h3>
-        <p>试试调整搜索词或筛选条件</p>
-      </div>`;
-    return;
-  }
-
-  if (filteredDomainGroups.length === 0) {
-    checkAndShowEmptyState();
-    return;
-  }
-
-  missionsEl.innerHTML = filteredDomainGroups.map(g => renderDomainCard(g)).join('');
-}
-
-/**
- * timeAgo(dateStr, justNowThresholdMins)
- *
- * Converts an ISO date string into a human-friendly relative time.
- * "2026-04-04T10:00:00Z" → "2 hrs ago" or "yesterday"
- * @param {string} dateStr - ISO date string
- * @param {number} [justNowThresholdMins=1] - minutes threshold for "刚刚"
- */
-function timeAgo(dateStr, justNowThresholdMins = 1) {
-  if (!dateStr) return '';
-  const then = new Date(dateStr);
-  const now  = new Date();
-  const diffMins  = Math.floor((now - then) / 60000);
-  const diffHours = Math.floor((now - then) / 3600000);
-  const diffDays  = Math.floor((now - then) / 86400000);
-
-  if (diffMins < justNowThresholdMins) return '刚刚';
-  if (diffMins < 60)  return diffMins + ' 分钟前';
-  if (diffHours < 24) return diffHours + ' 小时前';
-  if (diffDays === 1) return '昨天';
-  return diffDays + ' 天前';
-}
-
-/**
- * timeAgoForTab(lastAccessedMs)
- *
- * 将毫秒时间戳转换为相对时间，委托给 timeAgo 但扩展了更细的粒度
- */
-function timeAgoForTab(lastAccessedMs) {
-  if (!lastAccessedMs) return '';
-  const now = Date.now();
-  const diffMs = now - lastAccessedMs;
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  // 5 分钟阈值的 "刚刚"
-  if (diffMins < 5) return '刚刚';
-  // 调用 timeAgo 但使用 1 分钟阈值（因为已处理 < 5 分钟的情况）
-  if (diffMins < 60) return diffMins + ' 分钟前';
-  if (diffHours < 24) return diffHours + ' 小时前';
-  if (diffDays === 1) return '昨天';
-  if (diffDays < 7) return diffDays + ' 天前';
-  if (diffDays < 30) return Math.floor(diffDays / 7) + ' 周前';
-  return Math.floor(diffDays / 30) + ' 月前';
-}
-
-/**
- * getTimeColor(lastAccessedMs)
- *
- * 根据闲置时间返回颜色类名
- */
-function getTimeColor(lastAccessedMs) {
-  if (!lastAccessedMs) return 'time-neutral';
-  const diffHours = (Date.now() - lastAccessedMs) / 3600000;
-  if (diffHours < TIME_THRESHOLD_RECENT) return 'time-recent'; // 绿色
-  if (diffHours < TIME_THRESHOLD_MEDIUM)  return 'time-medium'; // 橙色
-  return 'time-old';                                        // 红色
-}
-
-/**
- * getGreeting() — "Good morning / afternoon / evening"
- */
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 6)  return '凌晨好';
-  if (hour < 9)  return '早上好';
-  if (hour < 12) return '上午好';
-  if (hour < 14) return '中午好';
-  if (hour < 18) return '下午好';
-  if (hour < 22) return '晚上好';
-  return '夜深了';
-}
-
-/**
- * getDateDisplay() — "Friday, April 4, 2026"
- */
-function getDateDisplay() {
-  return new Date().toLocaleDateString('zh-CN', {
-    weekday: 'long',
-    year:    'numeric',
-    month:   'long',
-    day:     'numeric',
-  });
-}
-
-
-/* ----------------------------------------------------------------
-   TIME & COLOR HELPERS
-   ---------------------------------------------------------------- */
-
-// Thresholds for getTimeColor (in hours)
-const TIME_THRESHOLD_RECENT = 1;   // < 1 hour  → green
-const TIME_THRESHOLD_MEDIUM  = 24;  // < 24 hours → orange
-
-// Map of known hostnames → friendly display names.
-const FRIENDLY_DOMAINS = {
-  'github.com':           'GitHub',
-  'www.github.com':       'GitHub',
-  'gist.github.com':      'GitHub Gist',
-  'youtube.com':          'YouTube',
-  'www.youtube.com':      'YouTube',
-  'music.youtube.com':    'YouTube Music',
-  'x.com':                'X',
-  'www.x.com':            'X',
-  'twitter.com':          'X',
-  'www.twitter.com':      'X',
-  'reddit.com':           'Reddit',
-  'www.reddit.com':       'Reddit',
-  'old.reddit.com':       'Reddit',
-  'substack.com':         'Substack',
-  'www.substack.com':     'Substack',
-  'medium.com':           'Medium',
-  'www.medium.com':       'Medium',
-  'linkedin.com':         'LinkedIn',
-  'www.linkedin.com':     'LinkedIn',
-  'stackoverflow.com':    'Stack Overflow',
-  'www.stackoverflow.com':'Stack Overflow',
-  'news.ycombinator.com': 'Hacker News',
-  'google.com':           'Google',
-  'www.google.com':       'Google',
-  'mail.google.com':      'Gmail',
-  'docs.google.com':      'Google Docs',
-  'drive.google.com':     'Google Drive',
-  'calendar.google.com':  'Google Calendar',
-  'meet.google.com':      'Google Meet',
-  'gemini.google.com':    'Gemini',
-  'chatgpt.com':          'ChatGPT',
-  'www.chatgpt.com':      'ChatGPT',
-  'chat.openai.com':      'ChatGPT',
-  'claude.ai':            'Claude',
-  'www.claude.ai':        'Claude',
-  'code.claude.com':      'Claude Code',
-  'notion.so':            'Notion',
-  'www.notion.so':        'Notion',
-  'figma.com':            'Figma',
-  'www.figma.com':        'Figma',
-  'slack.com':            'Slack',
-  'app.slack.com':        'Slack',
-  'discord.com':          'Discord',
-  'www.discord.com':      'Discord',
-  'wikipedia.org':        'Wikipedia',
-  'en.wikipedia.org':     'Wikipedia',
-  'amazon.com':           'Amazon',
-  'www.amazon.com':       'Amazon',
-  'netflix.com':          'Netflix',
-  'www.netflix.com':      'Netflix',
-  'spotify.com':          'Spotify',
-  'open.spotify.com':     'Spotify',
-  'vercel.com':           'Vercel',
-  'www.vercel.com':       'Vercel',
-  'npmjs.com':            'npm',
-  'www.npmjs.com':        'npm',
-  'developer.mozilla.org':'MDN',
-  'arxiv.org':            'arXiv',
-  'www.arxiv.org':        'arXiv',
-  'huggingface.co':       'Hugging Face',
-  'www.huggingface.co':   'Hugging Face',
-  'producthunt.com':      'Product Hunt',
-  'www.producthunt.com':  'Product Hunt',
-  'xiaohongshu.com':      'RedNote',
-  'www.xiaohongshu.com':  'RedNote',
-  'local-files':          'Local Files',
-};
-
-function friendlyDomain(hostname) {
-  if (!hostname) return '';
-  if (FRIENDLY_DOMAINS[hostname]) return FRIENDLY_DOMAINS[hostname];
-
-  if (hostname.endsWith('.substack.com') && hostname !== 'substack.com') {
-    return capitalize(hostname.replace('.substack.com', '')) + ' 的子栈';
-  }
-  if (hostname.endsWith('.github.io')) {
-    return capitalize(hostname.replace('.github.io', '')) + ' (GitHub Pages)';
-  }
-
-  let clean = hostname
-    .replace(/^www\./, '')
-    .replace(/\.(com|org|net|io|co|ai|dev|app|so|me|xyz|info|us|uk|co\.uk|co\.jp)$/, '');
-
-  return clean.split('.').map(part => capitalize(part)).join(' ');
-}
-
-function capitalize(str) {
-  if (!str) return '';
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-function stripTitleNoise(title) {
-  if (!title) return '';
-  // Strip leading notification count: "(2) Title"
-  title = title.replace(/^\(\d+\+?\)\s*/, '');
-  // Strip inline counts like "Inbox (16,359)"
-  title = title.replace(/\s*\([\d,]+\+?\)\s*/g, ' ');
-  // Strip email addresses (privacy + cleaner display)
-  title = title.replace(/\s*[\-\u2010-\u2015]\s*[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '');
-  title = title.replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '');
-  // Clean X/Twitter format
-  title = title.replace(/\s+on X:\s*/, ': ');
-  title = title.replace(/\s*\/\s*X\s*$/, '');
-  return title.trim();
-}
-
-function cleanTitle(title, hostname) {
-  if (!title || !hostname) return title || '';
-
-  const friendly = friendlyDomain(hostname);
-  const domain   = hostname.replace(/^www\./, '');
-  const seps     = [' - ', ' | ', ' — ', ' · ', ' – '];
-
-  for (const sep of seps) {
-    const idx = title.lastIndexOf(sep);
-    if (idx === -1) continue;
-    const suffix     = title.slice(idx + sep.length).trim();
-    const suffixLow  = suffix.toLowerCase();
-    if (
-      suffixLow === domain.toLowerCase() ||
-      suffixLow === friendly.toLowerCase() ||
-      suffixLow === domain.replace(/\.\w+$/, '').toLowerCase() ||
-      domain.toLowerCase().includes(suffixLow) ||
-      friendly.toLowerCase().includes(suffixLow)
-    ) {
-      const cleaned = title.slice(0, idx).trim();
-      if (cleaned.length >= 5) return cleaned;
-    }
-  }
-  return title;
-}
-
-function smartTitle(title, url) {
-  if (!url) return title || '';
-  let pathname = '', hostname = '';
-  try { const u = new URL(url); pathname = u.pathname; hostname = u.hostname; }
-  catch { return title || ''; }
-
-  const titleIsUrl = !title || title === url || title.startsWith(hostname) || title.startsWith('http');
-
-  if ((hostname === 'x.com' || hostname === 'twitter.com' || hostname === 'www.x.com') && pathname.includes('/status/')) {
-    const username = pathname.split('/')[1];
-    if (username) return titleIsUrl ? `Post by @${username}` : title;
-  }
-
-  if (hostname === 'github.com' || hostname === 'www.github.com') {
-    const parts = pathname.split('/').filter(Boolean);
-    if (parts.length >= 2) {
-      const [owner, repo, ...rest] = parts;
-      if (rest[0] === 'issues' && rest[1]) return `${owner}/${repo} Issue #${rest[1]}`;
-      if (rest[0] === 'pull'   && rest[1]) return `${owner}/${repo} PR #${rest[1]}`;
-      if (rest[0] === 'blob' || rest[0] === 'tree') return `${owner}/${repo} — ${rest.slice(2).join('/')}`;
-      if (titleIsUrl) return `${owner}/${repo}`;
-    }
-  }
-
-  if ((hostname === 'www.youtube.com' || hostname === 'youtube.com') && pathname === '/watch') {
-    if (titleIsUrl) return 'YouTube Video';
-  }
-
-  if ((hostname === 'www.reddit.com' || hostname === 'reddit.com' || hostname === 'old.reddit.com') && pathname.includes('/comments/')) {
-    const parts  = pathname.split('/').filter(Boolean);
-    const subIdx = parts.indexOf('r');
-    if (subIdx !== -1 && parts[subIdx + 1]) {
-      if (titleIsUrl) return `r/${parts[subIdx + 1]} post`;
-    }
-  }
-
-  return title || url;
-}
-
-
-/* ----------------------------------------------------------------
-   SVG ICON STRINGS
-   ---------------------------------------------------------------- */
-const ICONS = {
-  tabs:    `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.25V18a2.25 2.25 0 0 0 2.25 2.25h13.5A2.25 2.25 0 0 0 21 18V8.25m-18 0V6a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 6v2.25m-18 0h18" /></svg>`,
-  close:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
-  archive: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>`,
-  focus:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" /></svg>`,
-  group:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c.1 0 .201-.032.283-.09M7.5 14.25 5.106 5.272C4.41 5.983 4.5 6.56 4.5 7.25v1.5m12-3-3 3-3-3m-15.75 0H5.625c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h14.625" /></svg>`,
-};
-
-
-/* ----------------------------------------------------------------
-   IN-MEMORY STORE FOR OPEN-TAB GROUPS
-   ---------------------------------------------------------------- */
-let domainGroups = [];
-
-/* ----------------------------------------------------------------
-   SEARCH & FILTER STATE
-   ---------------------------------------------------------------- */
-let searchQuery = '';
-let filterTime = 'all';
-let filterDomain = 'all';
-let filteredDomainGroups = [];
-
-
-/* ----------------------------------------------------------------
-   HELPER: filter out browser-internal pages
-   ---------------------------------------------------------------- */
-
-/**
- * getRealTabs()
- *
- * Returns tabs that are real web pages — no chrome://, extension
- * pages, about:blank, etc.
- */
-function getRealTabs() {
-  return openTabs.filter(t => {
-    const url = t.url || '';
-    return (
-      !url.startsWith('chrome://') &&
-      !url.startsWith('chrome-extension://') &&
-      !url.startsWith('about:') &&
-      !url.startsWith('edge://') &&
-      !url.startsWith('brave://')
-    );
-  });
-}
-
-/**
- * checkTabOutDupes()
- *
- * Counts how many Tab Out pages are open. If more than 1,
- * shows a banner offering to close the extras.
- */
-function checkTabOutDupes() {
-  const tabOutTabs = openTabs.filter(t => t.isTabOut);
-  const banner  = document.getElementById('tabOutDupeBanner');
-  const countEl = document.getElementById('tabOutDupeCount');
-  if (!banner) return;
-
-  if (tabOutTabs.length > 1) {
-    if (countEl) countEl.textContent = tabOutTabs.length;
-    banner.style.display = 'flex';
-  } else {
-    banner.style.display = 'none';
-  }
-}
-
-
-/* ----------------------------------------------------------------
-   CHIP ELEMENT BUILDER
-   ---------------------------------------------------------------- */
-
-/**
- * buildPageChipElement(tab, label, chipClass, dupeTag)
- *
- * 构建单个 page-chip 的 HTML，消解 buildOverflowChips 与 renderDomainCard 之间的重复
- */
-function buildPageChipElement(tab, label, chipClass, dupeTag) {
-  const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
-  const safeTitle = label.replace(/"/g, '&quot;');
-  let domain = '';
-  try { domain = new URL(tab.url).hostname; } catch {}
-  const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
-  const timeTag = tab.lastAccessed
-    ? `<span class="chip-time ${getTimeColor(tab.lastAccessed)}">${timeAgoForTab(tab.lastAccessed)}</span>`
-    : '';
-  return `<div class="page-chip clickable${chipClass}" data-action="focus-tab" data-tab-url="${safeUrl}" title="${safeTitle}">
-    ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
-    <span class="chip-text">${label}</span>${timeTag}${dupeTag}
-    <div class="chip-actions">
-      <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后保存">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
-      </button>
-      <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭此标签">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-      </button>
-    </div>
-  </div>`;
-}
-
-
-/* ----------------------------------------------------------------
-   OVERFLOW CHIPS ("+N more" expand button in domain cards)
-   ---------------------------------------------------------------- */
-
-function buildOverflowChips(hiddenTabs, urlCounts = {}) {
-  const hiddenChips = hiddenTabs.map(tab => {
-    const label    = cleanTitle(smartTitle(stripTitleNoise(tab.title || ''), tab.url), '');
-    const count    = urlCounts[tab.url] || 1;
-    const dupeTag  = count > 1 ? ` <span class="chip-dupe-badge">(${count}x)</span>` : '';
-    const chipClass = count > 1 ? ' chip-has-dupes' : '';
-    return buildPageChipElement(tab, label, chipClass, dupeTag);
-  }).join('');
-
-  return `
-    <div class="page-chips-overflow" style="display:none">${hiddenChips}</div>
-    <div class="page-chip page-chip-overflow clickable" data-action="expand-chips">
-      <span class="chip-text">+${hiddenTabs.length} 更多</span>
-    </div>`;
-}
-
-
-/* ----------------------------------------------------------------
-   DOMAIN CARD RENDERER
-   ---------------------------------------------------------------- */
-
-/**
- * renderDomainCard(group, groupIndex)
- *
- * Builds the HTML for one domain group card.
- * group = { domain: string, tabs: [{ url, title, id, windowId, active }] }
- */
-function renderDomainCard(group) {
-  const tabs      = group.tabs || [];
-  const tabCount  = tabs.length;
-  const isLanding = group.domain === '__landing-pages__';
-  const stableId  = 'domain-' + group.domain.replace(/[^a-z0-9]/g, '-');
-
-  // Count duplicates (exact URL match)
-  const urlCounts = {};
-  for (const tab of tabs) urlCounts[tab.url] = (urlCounts[tab.url] || 0) + 1;
-  const dupeUrls   = Object.entries(urlCounts).filter(([, c]) => c > 1);
-  const hasDupes   = dupeUrls.length > 0;
-  const totalExtras = dupeUrls.reduce((s, [, c]) => s + c - 1, 0);
-
-  const tabBadge = `<span class="open-tabs-badge">
-    ${ICONS.tabs}
-    ${tabCount} 个标签页
-  </span>`;
-
-  const dupeBadge = hasDupes
-    ? `<span class="open-tabs-badge" style="color:var(--accent-amber);background:rgba(200,113,58,0.08);">
-        ${totalExtras} 个重复
-      </span>`
-    : '';
-
-  // Deduplicate for display: show each URL once, with (Nx) badge if duped
-  const seen = new Set();
-  const uniqueTabs = [];
-  for (const tab of tabs) {
-    if (!seen.has(tab.url)) { seen.add(tab.url); uniqueTabs.push(tab); }
-  }
-
-  const visibleTabs = uniqueTabs.slice(0, 8);
-  const extraCount  = uniqueTabs.length - visibleTabs.length;
-
-  const pageChips = visibleTabs.map(tab => {
-    let label = cleanTitle(smartTitle(stripTitleNoise(tab.title || ''), tab.url), group.domain);
-    // For localhost tabs, prepend port number so you can tell projects apart
-    try {
-      const parsed = new URL(tab.url);
-      if (parsed.hostname === 'localhost' && parsed.port) label = `${parsed.port} ${label}`;
-    } catch {}
-    const count     = urlCounts[tab.url];
-    const dupeTag   = count > 1 ? ` <span class="chip-dupe-badge">(${count}x)</span>` : '';
-    const chipClass = count > 1 ? ' chip-has-dupes' : '';
-    return buildPageChipElement(tab, label, chipClass, dupeTag);
-  }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts) : '');
-
-  let actionsHtml = `
-    <button class="action-btn close-tabs" data-action="close-domain-tabs" data-domain-id="${stableId}">
-      ${ICONS.close}
-      关闭全部 ${tabCount} 个标签
-    </button>
-    <button class="action-btn group-tabs" data-action="group-domain-tabs" data-domain-id="${stableId}" data-group-label="${isLanding ? '主页' : (group.label || friendlyDomain(group.domain))}">
-      ${ICONS.group}
-      创建标签组
-    </button>`;
-
-  if (hasDupes) {
-    const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
-    actionsHtml += `
-      <button class="action-btn" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}">
-        关闭 ${totalExtras} 个重复
-      </button>`;
-  }
-
-  return `
-    <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}">
-      <div class="status-bar"></div>
-      <div class="mission-content">
-        <div class="mission-top">
-          <span class="mission-name">${isLanding ? '主页' : (group.label || friendlyDomain(group.domain))}</span>
-          ${tabBadge}
-          ${dupeBadge}
-        </div>
-        <div class="mission-pages">${pageChips}</div>
-        <div class="actions">${actionsHtml}</div>
-      </div>
-      <div class="mission-meta">
-        <div class="mission-page-count">${tabCount}</div>
-        <div class="mission-page-label">标签页</div>
-      </div>
-    </div>`;
-}
-
-
-/* ----------------------------------------------------------------
-   SAVED FOR LATER — Render Checklist Column
-   ---------------------------------------------------------------- */
-
-/**
- * renderDeferredColumn()
- *
- * Reads saved tabs from chrome.storage.local and renders the right-side
- * "Saved for Later" checklist column. Shows active items as a checklist
- * and completed items in a collapsible archive.
- */
-async function renderDeferredColumn() {
-  const column         = document.getElementById('deferredColumn');
-  const list           = document.getElementById('deferredList');
-  const empty          = document.getElementById('deferredEmpty');
-  const countEl        = document.getElementById('deferredCount');
-  const archiveEl      = document.getElementById('deferredArchive');
-  const archiveCountEl = document.getElementById('archiveCount');
-  const archiveList    = document.getElementById('archiveList');
-
-  if (!column) return;
-
-  try {
-    const { active, archived } = await getSavedTabs();
-
-    // Hide the entire column if there's nothing to show
-    if (active.length === 0 && archived.length === 0) {
-      column.style.display = 'none';
-      return;
-    }
-
-    column.style.display = 'block';
-
-    // Render active checklist items
-    if (active.length > 0) {
-      countEl.textContent = `${active.length} 个项目`;
-      list.innerHTML = active.map(item => renderDeferredItem(item)).join('');
-      list.style.display = 'block';
-      empty.style.display = 'none';
-    } else {
-      list.style.display = 'none';
-      countEl.textContent = '';
-      empty.style.display = 'block';
-    }
-
-    // Render archive section
-    if (archived.length > 0) {
-      archiveCountEl.textContent = `(${archived.length})`;
-      archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
-      archiveEl.style.display = 'block';
-    } else {
-      archiveEl.style.display = 'none';
-    }
-
-  } catch (err) {
-    console.warn('[tab-out] Could not load saved tabs:', err);
-    column.style.display = 'none';
-  }
-}
-
-/**
- * renderDeferredItem(item)
- *
- * Builds HTML for one active checklist item: checkbox, title link,
- * domain, time ago, dismiss button.
- */
-function renderDeferredItem(item) {
-  let domain = '';
-  try { domain = new URL(item.url).hostname.replace(/^www\./, ''); } catch {}
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-  const ago = timeAgo(item.savedAt);
-
-  return `
-    <div class="deferred-item" data-deferred-id="${item.id}">
-      <input type="checkbox" class="deferred-checkbox" data-action="check-deferred" data-deferred-id="${item.id}">
-      <div class="deferred-info">
-        <a href="${item.url}" target="_blank" rel="noopener" class="deferred-title" title="${(item.title || '').replace(/"/g, '&quot;')}">
-          <img src="${faviconUrl}" alt="" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" onerror="this.style.display='none'">${item.title || item.url}
-        </a>
-        <div class="deferred-meta">
-          <span>${domain}</span>
-          <span>${ago}</span>
-        </div>
-      </div>
-      <button class="deferred-dismiss" data-action="dismiss-deferred" data-deferred-id="${item.id}" title="删除">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-      </button>
-    </div>`;
-}
-
-/**
- * renderArchiveItem(item)
- *
- * Builds HTML for one completed/archived item (simpler: just title + date).
- */
-function renderArchiveItem(item) {
-  const ago = item.completedAt ? timeAgo(item.completedAt) : timeAgo(item.savedAt);
-  return `
-    <div class="archive-item">
-      <a href="${item.url}" target="_blank" rel="noopener" class="archive-item-title" title="${(item.title || '').replace(/"/g, '&quot;')}">
-        ${item.title || item.url}
-      </a>
-      <span class="archive-item-date">${ago}</span>
-    </div>`;
-}
-
-
-/**
- * renderHistoryPanel()
- *
- * 渲染历史面板
- */
-async function renderHistoryPanel() {
-  const panel = document.getElementById('historyColumn');
-  const list = document.getElementById('historyList');
-  const empty = document.getElementById('historyEmpty');
-
-  const history = await getRecentlyClosed();
-
-  if (history.length === 0) {
-    panel.style.display = 'none';
-    return;
-  }
-
-  panel.style.display = 'block';
-  list.innerHTML = history.map(item => {
-    let domain = '';
-    try { domain = new URL(item.url).hostname; } catch {}
-    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-
-    return `
-      <div class="history-item" data-id="${item.id}" data-url="${item.url.replace(/"/g, '&quot;')}">
-        <img src="${faviconUrl}" class="favicon" alt="" onerror="this.style.display='none'">
-        <span class="title" title="${(item.title || '').replace(/"/g, '&quot;')}">${item.title || item.url}</span>
-        <span class="closed-at">${timeAgo(item.closedAt)}</span>
-        <button class="restore-btn" data-action="restore-from-history" data-id="${item.id}" data-url="${item.url.replace(/"/g, '&quot;')}" title="恢复">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15" /></svg>
-        </button>
-      </div>`;
-  }).join('');
-}
-
-
-/* ----------------------------------------------------------------
-   MAIN DASHBOARD RENDERER
-   ---------------------------------------------------------------- */
-
-/**
- * renderStaticDashboard()
- *
- * The main render function:
- * 1. Paints greeting + date
- * 2. Fetches open tabs via chrome.tabs.query()
- * 3. Groups tabs by domain (with landing pages pulled out to their own group)
- * 4. Renders domain cards
- * 5. Updates footer stats
- * 6. Renders the "Saved for Later" checklist
- */
-async function renderStaticDashboard() {
-  // --- Header ---
-  const greetingEl = document.getElementById('greeting');
-  const dateEl     = document.getElementById('dateDisplay');
-  if (greetingEl) greetingEl.textContent = getGreeting();
-  if (dateEl)     dateEl.textContent     = getDateDisplay();
-
-  // --- Fetch tabs ---
-  await fetchOpenTabs();
-  const realTabs = getRealTabs();
-
-  // --- Group tabs by domain ---
-  // Landing pages (Gmail inbox, Twitter home, etc.) get their own special group
-  // so they can be closed together without affecting content tabs on the same domain.
-  const LANDING_PAGE_PATTERNS = [
-    { hostname: 'mail.google.com', test: (p, h) =>
-        !h.includes('#inbox/') && !h.includes('#sent/') && !h.includes('#search/') },
-    { hostname: 'x.com',               pathExact: ['/home'] },
-    { hostname: 'www.linkedin.com',    pathExact: ['/'] },
-    { hostname: 'github.com',          pathExact: ['/'] },
-    { hostname: 'www.youtube.com',     pathExact: ['/'] },
-    // Merge personal patterns from config.local.js (if it exists)
-    ...(typeof LOCAL_LANDING_PAGE_PATTERNS !== 'undefined' ? LOCAL_LANDING_PAGE_PATTERNS : []),
-  ];
-
-  function isLandingPage(url) {
-    try {
-      const parsed = new URL(url);
-      return LANDING_PAGE_PATTERNS.some(p => {
-        // Support both exact hostname and suffix matching (for wildcard subdomains)
-        const hostnameMatch = p.hostname
-          ? parsed.hostname === p.hostname
-          : p.hostnameEndsWith
-            ? parsed.hostname.endsWith(p.hostnameEndsWith)
-            : false;
-        if (!hostnameMatch) return false;
-        if (p.test)       return p.test(parsed.pathname, url);
-        if (p.pathPrefix) return parsed.pathname.startsWith(p.pathPrefix);
-        if (p.pathExact)  return p.pathExact.includes(parsed.pathname);
-        return parsed.pathname === '/';
-      });
-    } catch { return false; }
-  }
-
-  domainGroups = [];
-  const groupMap    = {};
-  const landingTabs = [];
-
-  // Custom group rules from config.local.js (if any)
-  const customGroups = typeof LOCAL_CUSTOM_GROUPS !== 'undefined' ? LOCAL_CUSTOM_GROUPS : [];
-
-  // Check if a URL matches a custom group rule; returns the rule or null
-  function matchCustomGroup(url) {
-    try {
-      const parsed = new URL(url);
-      return customGroups.find(r => {
-        const hostMatch = r.hostname
-          ? parsed.hostname === r.hostname
-          : r.hostnameEndsWith
-            ? parsed.hostname.endsWith(r.hostnameEndsWith)
-            : false;
-        if (!hostMatch) return false;
-        if (r.pathPrefix) return parsed.pathname.startsWith(r.pathPrefix);
-        return true; // hostname matched, no path filter
-      }) || null;
-    } catch { return null; }
-  }
-
-  for (const tab of realTabs) {
-    try {
-      if (isLandingPage(tab.url)) {
-        landingTabs.push(tab);
-        continue;
-      }
-
-      // Check custom group rules first (e.g. merge subdomains, split by path)
-      const customRule = matchCustomGroup(tab.url);
-      if (customRule) {
-        const key = customRule.groupKey;
-        if (!groupMap[key]) groupMap[key] = { domain: key, label: customRule.groupLabel, tabs: [] };
-        groupMap[key].tabs.push(tab);
-        continue;
-      }
-
-      let hostname;
-      if (tab.url && tab.url.startsWith('file://')) {
-        hostname = 'local-files';
-      } else {
-        hostname = new URL(tab.url).hostname;
-      }
-      if (!hostname) continue;
-
-      if (!groupMap[hostname]) groupMap[hostname] = { domain: hostname, tabs: [] };
-      groupMap[hostname].tabs.push(tab);
-    } catch {
-      // Skip malformed URLs
-    }
-  }
-
-  if (landingTabs.length > 0) {
-    groupMap['__landing-pages__'] = { domain: '__landing-pages__', tabs: landingTabs };
-  }
-
-  // Sort: landing pages first, then domains from landing page sites, then by tab count
-  // Collect exact hostnames and suffix patterns for priority sorting
-  const landingHostnames = new Set(LANDING_PAGE_PATTERNS.map(p => p.hostname).filter(Boolean));
-  const landingSuffixes = LANDING_PAGE_PATTERNS.map(p => p.hostnameEndsWith).filter(Boolean);
-  function isLandingDomain(domain) {
-    if (landingHostnames.has(domain)) return true;
-    return landingSuffixes.some(s => domain.endsWith(s));
-  }
-  domainGroups = Object.values(groupMap).sort((a, b) => {
-    const aIsLanding = a.domain === '__landing-pages__';
-    const bIsLanding = b.domain === '__landing-pages__';
-    if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
-
-    const aIsPriority = isLandingDomain(a.domain);
-    const bIsPriority = isLandingDomain(b.domain);
-    if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
-
-    return b.tabs.length - a.tabs.length;
-  });
-
-  // --- Render domain cards ---
-  const openTabsSection      = document.getElementById('openTabsSection');
-  const openTabsMissionsEl   = document.getElementById('openTabsMissions');
-  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
-  const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
-
-  if (domainGroups.length > 0 && openTabsSection) {
-    if (openTabsSectionTitle) openTabsSectionTitle.textContent = '打开的标签页';
-    openTabsSectionCount.innerHTML = `${domainGroups.length} 个域名 &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} 关闭全部 ${realTabs.length} 个标签</button>`;
-
-    // 填充域名筛选下拉框
-    const filterDomainSelect = document.getElementById('filterDomain');
-    if (filterDomainSelect && domainGroups.length > 0) {
-      const currentValue = filterDomainSelect.value; // 保存当前选择
-      const domains = [...new Set(domainGroups.map(g => g.domain).filter(d => d !== '__landing-pages__'))];
-      filterDomainSelect.innerHTML = '<option value="all">域名: 全部</option>' +
-        domains.map(d => `<option value="${d}">${friendlyDomain(d)}</option>`).join('');
-      // 恢复选择（只在值仍然有效时）
-      if ([...domains, 'all'].includes(currentValue)) {
-        filterDomainSelect.value = currentValue;
-        filterDomain = currentValue; // 同步状态
-      }
-    }
-
-    // 初始不过滤，直接渲染
-    filteredDomainGroups = [...domainGroups];
-    renderFilteredDomainGroups();
-    openTabsSection.style.display = 'block';
-  } else if (openTabsSection) {
-    openTabsSection.style.display = 'none';
-  }
-
-  // --- Footer stats ---
-  const statTabs = document.getElementById('statTabs');
-  if (statTabs) statTabs.textContent = openTabs.length;
-
-  // --- Check for duplicate Tab Out tabs ---
-  checkTabOutDupes();
-
-  // --- Render "Saved for Later" column ---
-  await renderDeferredColumn();
-
-  // --- Render history panel ---
-  await renderHistoryPanel();
-}
-
-async function renderDashboard() {
-  await renderStaticDashboard();
-}
-
-
-/* ----------------------------------------------------------------
-   EVENT HANDLERS — using event delegation
-
-   One listener on document handles ALL button clicks.
-   Think of it as one security guard watching the whole building
-   instead of one per door.
-   ---------------------------------------------------------------- */
-
-document.addEventListener('click', async (e) => {
-  // Walk up the DOM to find the nearest element with data-action
-  const actionEl = e.target.closest('[data-action]');
-  if (!actionEl) return;
-
-  const action = actionEl.dataset.action;
-
-  // ---- Close duplicate Tab Out tabs ----
-  if (action === 'close-tabout-dupes') {
-    await closeTabOutDupes();
-    playCloseSound();
-    const banner = document.getElementById('tabOutDupeBanner');
-    if (banner) {
-      banner.style.transition = 'opacity 0.4s';
-      banner.style.opacity = '0';
-      setTimeout(() => { banner.style.display = 'none'; banner.style.opacity = '1'; }, 400);
-    }
-    showToast('已关闭多余的 Tab Out 标签');
-    return;
-  }
-
-  const card = actionEl.closest('.mission-card');
-
-  // ---- Expand overflow chips ("+N more") ----
-  if (action === 'expand-chips') {
-    const overflowContainer = actionEl.parentElement.querySelector('.page-chips-overflow');
-    if (overflowContainer) {
-      overflowContainer.style.display = 'contents';
-      actionEl.remove();
-    }
-    return;
-  }
-
-  // ---- Focus a specific tab ----
-  if (action === 'focus-tab') {
-    const tabUrl = actionEl.dataset.tabUrl;
-    if (tabUrl) await focusTab(tabUrl);
-    return;
-  }
-
-  // ---- Close a single tab ----
-  if (action === 'close-single-tab') {
-    e.stopPropagation(); // don't trigger parent chip's focus-tab
-    const tabUrl = actionEl.dataset.tabUrl;
-    if (!tabUrl) return;
-
-    // 在关闭标签前记录历史
-    const allTabs = await chrome.tabs.query({});
-    const tabToClose = allTabs.find(t => t.url === tabUrl);
-    if (tabToClose) {
-      await addToRecentlyClosed(tabToClose);
-    }
-
-    // Close the tab in Chrome directly
-    const match = allTabs.find(t => t.url === tabUrl);
-    if (match) await chrome.tabs.remove(match.id);
-    await fetchOpenTabs();
-
-    playCloseSound();
-
-    // Animate the chip row out
-    const chip = actionEl.closest('.page-chip');
-    if (chip) {
-      const rect = chip.getBoundingClientRect();
-      shootConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
-      chip.style.transition = 'opacity 0.2s, transform 0.2s';
-      chip.style.opacity    = '0';
-      chip.style.transform  = 'scale(0.8)';
-      setTimeout(() => {
-        chip.remove();
-        // If the card now has no tabs, remove it too
-        const parentCard = document.querySelector('.mission-card:has(.mission-pages:empty)');
-        if (parentCard) animateCardOut(parentCard);
-        document.querySelectorAll('.mission-card').forEach(c => {
-          if (c.querySelectorAll('.page-chip[data-action="focus-tab"]').length === 0) {
-            animateCardOut(c);
-          }
-        });
-      }, 200);
-    }
-
-    // Update footer
-    const statTabs = document.getElementById('statTabs');
-    if (statTabs) statTabs.textContent = openTabs.length;
-
-    showToast('标签已关闭');
-    return;
-  }
-
-  // ---- Save a single tab for later (then close it) ----
-  if (action === 'defer-single-tab') {
-    e.stopPropagation();
-    const tabUrl   = actionEl.dataset.tabUrl;
-    const tabTitle = actionEl.dataset.tabTitle || tabUrl;
-    if (!tabUrl) return;
-
-    // Save to chrome.storage.local
-    try {
-      await saveTabForLater({ url: tabUrl, title: tabTitle });
-    } catch (err) {
-      console.error('[tab-out] Failed to save tab:', err);
-      showToast('保存标签失败');
-      return;
-    }
-
-    // Close the tab in Chrome
-    const allTabs = await chrome.tabs.query({});
-    const match   = allTabs.find(t => t.url === tabUrl);
-    if (match) await chrome.tabs.remove(match.id);
-    await fetchOpenTabs();
-
-    // Animate chip out
-    const chip = actionEl.closest('.page-chip');
-    if (chip) {
-      chip.style.transition = 'opacity 0.2s, transform 0.2s';
-      chip.style.opacity    = '0';
-      chip.style.transform  = 'scale(0.8)';
-      setTimeout(() => chip.remove(), 200);
-    }
-
-    showToast('已保存到稍后阅读');
-    await renderDeferredColumn();
-    return;
-  }
-
-  // ---- Check off a saved tab (moves it to archive) ----
-  if (action === 'check-deferred') {
-    const id = actionEl.dataset.deferredId;
-    if (!id) return;
-
-    await checkOffSavedTab(id);
-
-    // Animate: strikethrough first, then slide out
-    const item = actionEl.closest('.deferred-item');
-    if (item) {
-      item.classList.add('checked');
-      setTimeout(() => {
-        item.classList.add('removing');
-        setTimeout(() => {
-          item.remove();
-          renderDeferredColumn(); // refresh counts and archive
-        }, 300);
-      }, 800);
-    }
-    return;
-  }
-
-  // ---- Dismiss a saved tab (removes it entirely) ----
-  if (action === 'dismiss-deferred') {
-    const id = actionEl.dataset.deferredId;
-    if (!id) return;
-
-    await dismissSavedTab(id);
-
-    const item = actionEl.closest('.deferred-item');
-    if (item) {
-      item.classList.add('removing');
-      setTimeout(() => {
-        item.remove();
-        renderDeferredColumn();
-      }, 300);
-    }
-    return;
-  }
-
-  // ---- Close all tabs in a domain group ----
-  if (action === 'close-domain-tabs') {
-    const domainId = actionEl.dataset.domainId;
-    const group    = domainGroups.find(g => {
-      return 'domain-' + g.domain.replace(/[^a-z0-9]/g, '-') === domainId;
-    });
-    if (!group) return;
-
-    const urls      = group.tabs.map(t => t.url);
-    // Landing pages and custom groups (whose domain key isn't a real hostname)
-    // must use exact URL matching to avoid closing unrelated tabs
-    const useExact  = group.domain === '__landing-pages__' || !!group.label;
-
-    if (useExact) {
-      await closeTabsExact(urls);
-    } else {
-      await closeTabsByUrls(urls);
-    }
-
-    if (card) {
-      playCloseSound();
-      animateCardOut(card);
-    }
-
-    // Remove from in-memory groups
-    const idx = domainGroups.indexOf(group);
-    if (idx !== -1) domainGroups.splice(idx, 1);
-
-    const groupLabel = group.domain === '__landing-pages__' ? '主页' : (group.label || friendlyDomain(group.domain));
-    showToast(`已从 ${groupLabel} 关闭 ${urls.length} 个标签`);
-
-    const statTabs = document.getElementById('statTabs');
-    if (statTabs) statTabs.textContent = openTabs.length;
-    return;
-  }
-
-  // ---- Create native tab group ----
-  if (action === 'group-domain-tabs') {
-    const domainId = actionEl.dataset.domainId;
-    const groupLabel = actionEl.dataset.groupLabel;
-    const group = domainGroups.find(g => {
-      return 'domain-' + g.domain.replace(/[^a-z0-9]/g, '-') === domainId;
-    });
-    if (group) {
-      const tabIds = group.tabs.map(t => t.id);
-      await createTabGroup(tabIds, groupLabel);
-    } else {
-      showToast('未找到分组');
-    }
-    return;
-  }
-
-  // ---- Close duplicates, keep one copy ----
-  if (action === 'dedup-keep-one') {
-    const urlsEncoded = actionEl.dataset.dupeUrls || '';
-    const urls = urlsEncoded.split(',').map(u => decodeURIComponent(u)).filter(Boolean);
-    if (urls.length === 0) return;
-
-    await closeDuplicateTabs(urls, true);
-    playCloseSound();
-
-    // Hide the dedup button
-    actionEl.style.transition = 'opacity 0.2s';
-    actionEl.style.opacity    = '0';
-    setTimeout(() => actionEl.remove(), 200);
-
-    // Remove dupe badges from the card
-    if (card) {
-      card.querySelectorAll('.chip-dupe-badge').forEach(b => {
-        b.style.transition = 'opacity 0.2s';
-        b.style.opacity    = '0';
-        setTimeout(() => b.remove(), 200);
-      });
-      card.querySelectorAll('.open-tabs-badge').forEach(badge => {
-        if (badge.textContent.includes('duplicate')) {
-          badge.style.transition = 'opacity 0.2s';
-          badge.style.opacity    = '0';
-          setTimeout(() => badge.remove(), 200);
-        }
-      });
-      card.classList.remove('has-amber-bar');
-      card.classList.add('has-neutral-bar');
-    }
-
-    showToast('已关闭重复标签，各保留一个');
-    return;
-  }
-
-  // ---- Close ALL open tabs ----
-  if (action === 'close-all-open-tabs') {
-    const allUrls = openTabs
-      .filter(t => t.url && !t.url.startsWith('chrome') && !t.url.startsWith('about:'))
-      .map(t => t.url);
-    await closeTabsByUrls(allUrls);
-    playCloseSound();
-
-    document.querySelectorAll('#openTabsMissions .mission-card').forEach(c => {
-      shootConfetti(
-        c.getBoundingClientRect().left + c.offsetWidth / 2,
-        c.getBoundingClientRect().top  + c.offsetHeight / 2
-      );
-      animateCardOut(c);
-    });
-
-    showToast('所有标签已关闭，崭新的开始');
-    return;
-  }
-});
-
-// ---- Archive toggle — expand/collapse the archive section ----
-document.addEventListener('click', (e) => {
-  const toggle = e.target.closest('#archiveToggle');
-  if (!toggle) return;
-
-  toggle.classList.toggle('open');
-  const body = document.getElementById('archiveBody');
-  if (body) {
-    body.style.display = body.style.display === 'none' ? 'block' : 'none';
-  }
-});
-
-// ---- History item click — navigate to URL ----
-document.addEventListener('click', async (e) => {
-  const historyItem = e.target.closest('.history-item');
-  if (historyItem && !e.target.closest('.restore-btn')) {
-    const url = historyItem.dataset.url;
-    if (url) {
-      await chrome.tabs.create({ url });
-    }
-    return;
-  }
-
-  // Restore button
-  const restoreBtn = e.target.closest('.restore-btn');
-  if (restoreBtn) {
-    const id = restoreBtn.dataset.id;
-    const url = restoreBtn.dataset.url;
-    if (url && id) {
-      await chrome.tabs.create({ url });
-      await removeFromRecentlyClosed(id);
-      await renderHistoryPanel();
-      showToast('已恢复');
-    }
-    return;
-  }
-});
-
-// ---- Clear history ----
-document.getElementById('clearHistoryBtn')?.addEventListener('click', async () => {
-  await clearRecentlyClosed();
-  await renderHistoryPanel();
-  showToast('历史已清空');
-});
-
-// ---- Archive search — filter archived items as user types ----
-document.addEventListener('input', async (e) => {
-  if (e.target.id !== 'archiveSearch') return;
-
-  const q = e.target.value.trim().toLowerCase();
-  const archiveList = document.getElementById('archiveList');
-  if (!archiveList) return;
-
-  try {
-    const { archived } = await getSavedTabs();
-
-    if (q.length < 2) {
-      // Show all archived items
-      archiveList.innerHTML = archived.map(item => renderArchiveItem(item)).join('');
-      return;
-    }
-
-    // Filter by title or URL containing the query string
-    const results = archived.filter(item =>
-      (item.title || '').toLowerCase().includes(q) ||
-      (item.url  || '').toLowerCase().includes(q)
-    );
-
-    archiveList.innerHTML = results.map(item => renderArchiveItem(item)).join('')
-      || '<div style="font-size:12px;color:var(--muted);padding:8px 0">无结果</div>';
-  } catch (err) {
-    console.warn('[tab-out] Archive search failed:', err);
-  }
-});
-
-
-// ── 搜索和筛选事件 ──
-document.getElementById('searchInput')?.addEventListener('input', (e) => {
-  searchQuery = e.target.value;
-  document.getElementById('searchClear').style.display = searchQuery ? 'block' : 'none';
-  filterDomainGroups();
-});
-
-document.getElementById('searchClear')?.addEventListener('click', () => {
-  document.getElementById('searchInput').value = '';
-  searchQuery = '';
-  document.getElementById('searchClear').style.display = 'none';
-  filterDomainGroups();
-});
-
-document.getElementById('filterTime')?.addEventListener('change', (e) => {
-  filterTime = e.target.value;
-  filterDomainGroups();
-});
-
-document.getElementById('filterDomain')?.addEventListener('change', (e) => {
-  filterDomain = e.target.value;
-  filterDomainGroups();
-});
-
-
-/* ----------------------------------------------------------------
-   快捷键支持
-   ---------------------------------------------------------------- */
-
-let focusedChipIndex = -1; // 当前聚焦的 chip 索引
-
-function getAllChips() {
-  return Array.from(document.querySelectorAll('.page-chip[data-action="focus-tab"]'));
-}
-
-function updateFocusedChip(index) {
-  const chips = getAllChips();
-  chips.forEach((chip, i) => {
-    chip.classList.toggle('focused', i === index);
-  });
-  focusedChipIndex = index;
-}
-
-function clearFocusedChip() {
-  const chips = getAllChips();
-  chips.forEach(chip => chip.classList.remove('focused'));
-  focusedChipIndex = -1;
-}
-
-// 首次使用提示
-function showKeyboardHints() {
-  const hasSeen = localStorage.getItem('tabout-keyboard-hints-seen');
-  if (!hasSeen) {
-    setTimeout(() => {
-      showToast('按 / 键搜索 · d 保存 · x 关闭 · j/k 导航', 4000);
-      localStorage.setItem('tabout-keyboard-hints-seen', 'true');
-    }, 1000);
-  }
-}
-
-document.addEventListener('keydown', async (e) => {
-  // 忽略输入框内的按键
-  if (e.target.matches('input, textarea')) {
-    if (e.key === 'Escape') {
-      e.target.value = '';
-      e.target.dispatchEvent(new Event('input'));
-      e.target.blur();
-    }
-    return;
-  }
-
-  const searchInput = document.getElementById('searchInput');
-
-  switch (e.key) {
-    case '/':
-      e.preventDefault();
-      searchInput?.focus();
-      break;
-
-    case 'Escape':
-      if (searchInput?.value) {
-        searchInput.value = '';
-        searchInput.dispatchEvent(new Event('input'));
-      }
-      clearFocusedChip();
-      // 关闭展开的 chips
-      document.querySelectorAll('.page-chips-overflow').forEach(el => {
-        el.style.display = 'none';
-      });
-      break;
-
-    case 'd':
-    case 'D':
-      // 保存当前聚焦的标签
-      if (focusedChipIndex >= 0) {
-        const chips = getAllChips();
-        const chip = chips[focusedChipIndex];
-        if (chip) {
-          const saveBtn = chip.querySelector('[data-action="defer-single-tab"]');
-          if (saveBtn) saveBtn.click();
-        }
-      }
-      break;
-
-    case 'x':
-    case 'X':
-      // 关闭当前聚焦的标签
-      if (focusedChipIndex >= 0) {
-        const chips = getAllChips();
-        const chip = chips[focusedChipIndex];
-        if (chip) {
-          const closeBtn = chip.querySelector('[data-action="close-single-tab"]');
-          if (closeBtn) closeBtn.click();
-          clearFocusedChip();
-        }
-      }
-      break;
-
-    case 'j':
-    case 'ArrowDown':
-      e.preventDefault();
-      {
-        const chips = getAllChips();
-        if (chips.length === 0) return;
-        const nextIndex = focusedChipIndex < chips.length - 1 ? focusedChipIndex + 1 : 0;
-        updateFocusedChip(nextIndex);
-        chips[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-      break;
-
-    case 'k':
-    case 'ArrowUp':
-      e.preventDefault();
-      {
-        const chips = getAllChips();
-        if (chips.length === 0) return;
-        const prevIndex = focusedChipIndex > 0 ? focusedChipIndex - 1 : chips.length - 1;
-        updateFocusedChip(prevIndex);
-        chips[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-      break;
-  }
-});
-
-// 初始化时显示快捷键提示
-showKeyboardHints();
-
-
-/* ----------------------------------------------------------------
-   INITIALIZE
-   ---------------------------------------------------------------- */
-renderDashboard();
