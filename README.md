@@ -1,91 +1,164 @@
-# Tab Out
+# TabCove - 标签页管理专家
 
-**Keep tabs on your tabs.**
+<p align="center">
+  <img src="extension/icons/icon.svg" width="128" height="128" alt="TabCove Logo">
+</p>
 
-Tab Out is a Chrome extension that replaces your new tab page with a dashboard of everything you have open. Tabs are grouped by domain, with homepages (Gmail, X, LinkedIn, etc.) pulled into their own group. Close tabs with a satisfying swoosh + confetti.
+<p align="center">
+  <strong>让标签页井然有序</strong><br>
+  告别凌乱，从容管理
+</p>
 
-No server. No account. No external API calls. Just a Chrome extension.
+<p align="center">
+  <a href="https://github.com/tom-hanks/TabCove/stargazers">
+    <img src="https://img.shields.io/github/stars/tom-hanks/TabCove?style=flat-square" alt="Stars">
+  </a>
+  <a href="https://github.com/tom-hanks/TabCove/issues">
+    <img src="https://img.shields.io/github/issues/tom-hanks/TabCove?style=flat-square" alt="Issues">
+  </a>
+  <img src="https://img.shields.io/badge/chrome-extension Manifest V3-green?style=flat-square" alt="Manifest V3">
+</p>
 
 ---
 
-## Install with a coding agent
+## 功能特性
 
-Send your coding agent (Claude Code, Codex, etc.) this repo and say **"install this"**:
+### 核心能力
+
+| 功能 | 说明 |
+|------|------|
+| **标签页分组** | 按域名自动分组，清晰展示所有打开的标签页 |
+| **一键休眠** | 休眠不常用的标签页，释放内存但保留恢复能力 |
+| **稍后阅读** | 收藏标签页，随时打开继续浏览 |
+| **最近关闭** | 误关也能找回，支持一键恢复 |
+| **浏览器原生分组** | 可将同域名标签页创建为 Chrome 原生分组 |
+
+### 交互体验
+
+- **主题切换** - 支持浅色/深色模式，6 种主题色可选
+- **搜索过滤** - 快速定位目标标签页
+- **键盘友好** - 所有操作均可通过快捷键完成
+- **响应迅速** - 毫秒级切换，告别加载等待
+
+### 数据安全
+
+- **100% 本地存储** - 数据仅保存在本地，绝不上传
+- **Chrome Storage** - 利用浏览器原生存储，安全可靠
+- **无外部依赖** - 无服务器、无账号、无追踪
+
+---
+
+## 快速上手
+
+### 安装步骤
+
+**1. 下载扩展**
+
+```bash
+# 克隆仓库
+git clone https://github.com/tom-hanks/TabCove.git
+cd TabCove
+```
+
+**2. 加载扩展**
+
+1. 打开 Chrome，访问 `chrome://extensions`
+2. 右上角开启 **开发者模式**
+3. 点击 **加载已解压的扩展程序**
+4. 选择项目中的 `extension/` 文件夹
+
+**3. 开始使用**
+
+打开新标签页即可看到 TabCove 界面。
+
+### 配合 AI 代理使用
+
+将仓库地址发送给 AI 编程助手（Claude Code、Codex 等），说"帮我安装这个"：
 
 ```
 https://github.com/tom-hanks/TabCove
 ```
 
-The agent will walk you through it. Takes about 1 minute.
+AI 会自动引导你完成安装。
 
 ---
 
-## Features
-
-- **See all your tabs at a glance** on a clean grid, grouped by domain
-- **Homepages group** pulls Gmail inbox, X home, YouTube, LinkedIn, GitHub homepages into one card
-- **Close tabs with style** with swoosh sound + confetti burst
-- **Duplicate detection** flags when you have the same page open twice, with one-click cleanup
-- **Click any tab to jump to it** across windows, no new tab opened
-- **Save for later** bookmark tabs to a checklist before closing them
-- **Localhost grouping** shows port numbers next to each tab so you can tell your vibe coding projects apart
-- **Expandable groups** show the first 8 tabs with a clickable "+N more"
-- **100% local** your data never leaves your machine
-- **Pure Chrome extension** no server, no Node.js, no npm, no setup beyond loading the extension
-
----
-
-## Manual Setup
-
-**1. Clone the repo**
-
-```bash
-git clone https://github.com/tom-hanks/TabCove.git
-```
-
-**2. Load the Chrome extension**
-
-1. Open Chrome and go to `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Navigate to the `extension/` folder inside the cloned repo and select it
-
-**3. Open a new tab**
-
-You'll see Tab Out.
-
----
-
-## How it works
+## 界面预览
 
 ```
-You open a new tab
-  -> Tab Out shows your open tabs grouped by domain
-  -> Homepages (Gmail, X, etc.) get their own group at the top
-  -> Click any tab title to jump to it
-  -> Close groups you're done with (swoosh + confetti)
-  -> Save tabs for later before closing them
+┌─────────────────────────────────────────────────────────┐
+│  ☰  TabCove                                             │
+├──────────────┬──────────────────────────────────────────┤
+│              │                                          │
+│  📋 全部标签 │   github.com                     3 个标签│
+│  (12)        │   ├── repo/tom-hanks/TabCove             │
+│              │   ├── issues/123                      🔴 │
+│  ⭐ 稍后阅读 │   └── pull/456                         🔴 │
+│  (3)         │                                          │
+│              │   juejin.cn                       2 个标签│
+│  💤 已休眠   │   ├── post/70854321                    🔴 │
+│  (5)         │   └── column/123456                    🔴 │
+│              │                                          │
+│  🕐 最近关闭 │   ▸ google.com                   8 个标签 │
+│  (7)         │                                          │
+│              │                                          │
+├──────────────┴──────────────────────────────────────────┤
+│  搜索标签页...                              🌙  🔄      │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Everything runs inside the Chrome extension. No external server, no API calls, no data sent anywhere. Saved tabs are stored in `chrome.storage.local`.
+---
+
+## 技术实现
+
+| 层级 | 技术方案 |
+|------|----------|
+| 扩展框架 | Chrome Manifest V3 |
+| 数据存储 | chrome.storage.local |
+| 音频合成 | Web Audio API（无音频文件） |
+| 动画效果 | CSS Transitions + Canvas |
+| 图标 | Google Favicon API |
 
 ---
 
-## Tech stack
+## 项目结构
 
-| What | How |
-|------|-----|
-| Extension | Chrome Manifest V3 |
-| Storage | chrome.storage.local |
-| Sound | Web Audio API (synthesized, no files) |
-| Animations | CSS transitions + JS confetti particles |
+```
+TabCove/
+├── extension/
+│   ├── manifest.json      # 扩展配置
+│   ├── background.js      # Service Worker
+│   ├── app.js             # 主应用逻辑
+│   ├── index.html         # 新标签页
+│   ├── style.css          # 样式表
+│   ├── suspended.html      # 休眠提示页
+│   └── icons/             # 图标资源
+├── README.md              # 中文说明
+├── AGENTS.md              # AI 代理安装指南
+└── CLAUDE.md              # Claude Code 上下文
+```
 
 ---
 
-## License
+## 更新日志
 
-MIT
+### v1.0.0
+- 标签页分组管理
+- 休眠/唤醒功能
+- 稍后阅读收藏
+- 最近关闭恢复
+- 浏览器原生分组
+- 浅色/深色主题
+- 6 种主题色
 
 ---
 
-Built by [laryers](https://juejin.cn/user/3790771820966440/posts)
+## 许可证
+
+[MIT License](LICENSE)
+
+---
+
+<a href="https://juejin.cn/user/3790771820966440/posts">
+  Built by laryers
+</a>
